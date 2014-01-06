@@ -1,5 +1,7 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include "coroutine.h"
 #include "scheduler.h"
@@ -87,10 +89,27 @@ Scheduler::Resume(int id) {
   return 0;
 }
 
+unsigned int
+Scheduler::Sleep(unsigned int seconds) {
+  Coroutine *coro = coros_[current_];
+  time_t now = time(NULL);
+  sleep_.insert(make_pair(now + seconds, coro));
+  coro->set_status(SUSPEND);
+  swapcontext(coro->get_context(), get_context());
+
+  return 0;
+}
+
+void
+Scheduler::Run() {
+  ScheduleMain(this);
+}
+
 void*
 ScheduleMain(void *arg) {
+  printf("in ScheduleMain\n");
   Scheduler *sched = (Scheduler*)arg;
-  list<Coroutine*>::iterator iter;
+  list<Coroutine*>::iterator iter, tmp;
   Coroutine *coro;
   ucontext_t *main;
   int id;
@@ -101,20 +120,26 @@ ScheduleMain(void *arg) {
       usleep(100);
     }
     for (iter = sched->active_.begin();
-         iter != sched->active_.end(); ++iter) {
+         iter != sched->active_.end(); ) {
       coro = *iter;
       id = coro->get_id();
+      sched->current_ = id;
 
       swapcontext(main,coro->get_context()); 
       int status = coro->get_status();
       if (status == DEAD) {
         delete coro;
-        sched->active_.erase(iter);
+        tmp = iter;
+        ++iter;
+        sched->active_.erase(tmp);
         sched->coros_[id] = NULL;
         --sched->num_;
       } else if (status == SUSPEND) {
-        sched->active_.erase(iter);
-        //sleep_.push_back(coros_);
+        tmp = iter;
+        ++iter;
+        sched->active_.erase(tmp);
+      } else {
+        ++iter;
       }
     }
   }

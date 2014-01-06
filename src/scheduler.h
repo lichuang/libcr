@@ -2,6 +2,7 @@
 #define __SCHEDULER_H__
 
 #include <list>
+#include <map>
 #include <ucontext.h>
 #include "common.h"
 
@@ -18,10 +19,13 @@ public:
   ~Scheduler();
 
   int  Spawn(cfunc func, void *arg);
+  void Run();
   int  Yield(int id);
   int  Resume(int id);
 
   ucontext_t *get_context();
+
+  unsigned int Sleep(unsigned int seconds);
 
 private:
   int NewCoroutineId();
@@ -35,7 +39,7 @@ private:
   int                 current_;
   int                 last_;
   list<Coroutine*>    active_;
-  list<Coroutine*>    sleep_;
+  multimap<unsigned int, Coroutine*> sleep_;
 };
 
 #endif  /* __SCHEDULER_H__ */

@@ -4,10 +4,13 @@
 
 void *func(void *arg) {
   int i = (int)arg;
+  sleep(i);
   printf("thread %d\n", i);
 
   return NULL;
 }
+
+extern void Run();
 
 int main() {
   int i;
@@ -16,7 +19,8 @@ int main() {
     pthread_create(&id, NULL, func, (void*)i);
   }
 
-  sleep(1);
+  //sleep(5);
+  Run();
 
   return 0;
 }
