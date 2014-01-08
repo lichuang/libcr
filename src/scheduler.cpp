@@ -1,8 +1,12 @@
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/epoll.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include "coroutine.h"
 #include "scheduler.h"
 
@@ -21,6 +25,8 @@ Scheduler::Scheduler()
   current_ = NewCoroutineId();
   main_ = new Coroutine(this, current_, ScheduleMain, this);
   coros_[current_] = main_;
+
+  epoll_fd_ = epoll_create(1024);
 }
 
 Scheduler::~Scheduler() {
@@ -93,11 +99,151 @@ unsigned int
 Scheduler::Sleep(unsigned int seconds) {
   Coroutine *coro = coros_[current_];
   time_t now = time(NULL);
-  sleep_.insert(make_pair(now + seconds, coro));
+  sleep_.insert(make_pair((now + seconds) * 1000, coro));
   coro->set_status(SUSPEND);
   swapcontext(coro->get_context(), get_context());
 
   return 0;
+}
+
+int
+Scheduler::Listen(int fd) {
+  Coroutine *coro = coros_[current_];
+
+  epoll_event ev;
+  Socket *sock = new Socket();
+  sock->fd = fd;
+  sock->co = coro;
+  socks_[fd] = sock;
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLIN;
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    return -1;
+  }
+  coro->set_status(SUSPEND);
+  swapcontext(coro->get_context(), main_->get_context());
+  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, &ev);
+
+  return 1;
+}
+
+ssize_t
+Scheduler::Recv(int fd, void *buf, size_t len, int flags) {
+  Coroutine *coro = coros_[current_];
+  ssize_t     ret;
+
+  epoll_event ev;
+  Socket *sock = socks_[fd];
+  if (sock == NULL) {
+    sock = new Socket();
+    socks_[fd] = sock;
+  }
+  sock->fd = fd;
+  sock->co = coro;
+
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLIN;
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    return -1;
+  }
+  coro->set_status(SUSPEND);
+  swapcontext(coro->get_context(), main_->get_context());
+  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, &ev);
+
+  ret = 0;
+  while (ret < (ssize_t)len) {
+    ssize_t nbytes = recv(fd, (char*)buf + ret, len - ret, flags);
+    if (nbytes == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        break;
+      } else if (errno != EINTR) {
+        return -1;
+      }
+    }
+
+    if (nbytes == 0) {
+      return -1;
+    }
+
+    ret += nbytes;
+    if (nbytes < (ssize_t)len - ret) {
+      break;
+    }
+  }
+
+  return ret;
+}
+
+ssize_t
+Scheduler::Send(int fd, const void *buf, size_t len, int flags) {
+  Coroutine *coro = coros_[current_];
+  ssize_t     ret;
+
+  epoll_event ev;
+  Socket *sock = socks_[fd];
+  if (sock == NULL) {
+    sock = new Socket();
+    socks_[fd] = sock;
+  }
+  sock->fd = fd;
+  sock->co = coro;
+
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLOUT;
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    return -1;
+  }
+  coro->set_status(SUSPEND);
+  swapcontext(coro->get_context(), main_->get_context());
+  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, &ev);
+
+  ret = 0;
+  while (ret < (ssize_t)len) {
+    ssize_t nbytes = send(fd, (char*)buf + ret, len - ret, flags | MSG_NOSIGNAL);
+    if (nbytes == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        break;
+      } else if (errno != EINTR) {
+        return -1;
+      }
+    }
+
+    if (nbytes == 0) {
+      return -1;
+    }
+
+    ret += nbytes;
+    if (nbytes < (ssize_t)len - ret) {
+      break;
+    }
+  }
+
+  return ret;
+}
+
+void
+Scheduler::CheckNetwork() {
+  epoll_event events[1024];
+  Socket *sock;
+  int nfds = epoll_wait(epoll_fd_, events, sizeof(events), 100);
+  int i;
+
+  for(i = 0 ; i < nfds ; ++i) {
+    if(events[i].events & EPOLLIN)
+    {     
+      sock = (Socket*)events[i].data.ptr;
+      sock->co->set_status(RUNNING);
+      active_.push_back(sock->co); 
+      continue;
+    }
+    if(events[i].events & EPOLLOUT)
+    {
+      sock = (Socket*)events[i].data.ptr;
+      sock->co->set_status(RUNNING);
+      active_.push_back(sock->co); 
+      continue;
+    }
+  }
 }
 
 void
@@ -107,7 +253,6 @@ Scheduler::Run() {
 
 void*
 ScheduleMain(void *arg) {
-  printf("in ScheduleMain\n");
   Scheduler *sched = (Scheduler*)arg;
   list<Coroutine*>::iterator iter, tmp;
   Coroutine *coro;
@@ -116,9 +261,6 @@ ScheduleMain(void *arg) {
 
   main = sched->get_context();
   while (true) {
-    while (sched->active_.empty()) {
-      usleep(100);
-    }
     for (iter = sched->active_.begin();
          iter != sched->active_.end(); ) {
       coro = *iter;
@@ -142,6 +284,8 @@ ScheduleMain(void *arg) {
         ++iter;
       }
     }
+
+    sched->CheckNetwork();
   }
 
   return NULL;

@@ -26,11 +26,20 @@ public:
   ucontext_t *get_context();
 
   unsigned int Sleep(unsigned int seconds);
+  int          Listen(int fd);
+  ssize_t      Recv(int fd, void *buf, size_t len, int flags);
+  ssize_t      Send(int fd, const void *buf, size_t len, int flags);
 
 private:
   int NewCoroutineId();
+  void CheckNetwork();
 
 private:
+  struct Socket {
+    int               fd;
+    Coroutine        *co;
+  };
+
   Coroutine*          main_;
   int                 epoll_fd_;
   Coroutine**         coros_;
@@ -40,6 +49,7 @@ private:
   int                 last_;
   list<Coroutine*>    active_;
   multimap<unsigned int, Coroutine*> sleep_;
+  map<int, Socket*>   socks_;
 };
 
 #endif  /* __SCHEDULER_H__ */
