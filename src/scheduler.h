@@ -4,6 +4,8 @@
 #include <list>
 #include <map>
 #include <ucontext.h>
+#include <sys/types.h>          /* See NOTES */
+#include <sys/socket.h>
 #include "common.h"
 
 using namespace std;
@@ -20,16 +22,17 @@ public:
 
   int  Spawn(cfunc func, void *arg);
   void Run();
-  int  Yield(int id);
-  int  Resume(int id);
 
   ucontext_t *get_context();
 
   unsigned int Sleep(unsigned int seconds);
-  int          Listen(int fd);
+  int          Accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
   ssize_t      Recv(int fd, void *buf, size_t len, int flags);
   ssize_t      Send(int fd, const void *buf, size_t len, int flags);
 
+  int          get_current() const {
+    return current_;
+  }
 private:
   int NewCoroutineId();
   void CheckNetwork();
@@ -40,7 +43,8 @@ private:
     Coroutine        *co;
   };
 
-  Coroutine*          main_;
+  ucontext_t          main_;
+  //Coroutine*          main_;
   int                 epoll_fd_;
   Coroutine**         coros_;
   int                 capacity_;

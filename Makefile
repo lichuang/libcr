@@ -16,7 +16,7 @@ CC=g++
 AR= ar rcu
 CFLAGS=-Wall -Werror -g 
 #LDFLAGS= -L ./lib -lcr -pthread
-LDFLAGS= -L ./lib -lcr
+LDFLAGS= -L ./lib -lcr -ldl
 
 all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
