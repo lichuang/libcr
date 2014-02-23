@@ -6,7 +6,7 @@ OBJ_DIR=$(DIR)/obj
 LIB_DIR=$(DIR)/lib
 LIB=libcr.a
 
-EXTENSION=cpp
+EXTENSION=cc
 OBJS=$(patsubst $(SRC_DIR)/%.$(EXTENSION), $(OBJ_DIR)/%.o,$(wildcard $(SRC_DIR)/*.$(EXTENSION)))
 DEPS=$(patsubst $(OBJ_DIR)/%.o, $(DEPS_DIR)/%.d, $(OBJS))
 
