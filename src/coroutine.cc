@@ -69,6 +69,8 @@ Scheduler::Scheduler()
   coros_.resize(kCoroNum, NULL);
   socks_.resize(kCoroNum, NULL);
 
+  AllocateFreeIds();
+
   epfd_ = epoll_create(1024);
 
   gSysAccept = (sysAccept)dlsym(RTLD_NEXT, "accept");
