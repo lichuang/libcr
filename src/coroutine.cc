@@ -14,6 +14,9 @@ static const int kDefaulaStackSize = 100 * 1024;
 // coroutine num
 static const int kCoroNum = 256;
 
+// allocate free id num
+static const int kAllocateFreeNum = 100;
+
 static const int kStatusDead    = 0;
 static const int kStatusReady   = 1;
 static const int kStatusRunning = 2;
@@ -61,7 +64,8 @@ struct Socket {
 Scheduler::Scheduler()
   : epfd_(-1),
     running_(-1),
-    num_(0) {
+    num_(0),
+    free_count_(0) {
   coros_.resize(kCoroNum, NULL);
   socks_.resize(kCoroNum, NULL);
 
@@ -86,19 +90,24 @@ Scheduler::~Scheduler() {
   }
 }
 
+void
+Scheduler::AllocateFreeIds() {
+  int i;
+
+  for (i = 1; i <= kAllocateFreeNum; ++i) {
+    free_ids_.push_back(i + free_count_);
+  }
+  free_count_ += kAllocateFreeNum;
+}
+
 int
 Scheduler::NewId() {
-  if (num_ == coros_.size()) {
-    coros_.resize(num_ + kCoroNum);
-    socks_.resize(num_ + kCoroNum);
-    return num_;
+  int i;
+  if (free_ids_.empty()) {
+    AllocateFreeIds();
   }
-  size_t i;
-  for (i = 0; i < coros_.size(); ++i) {
-    if (coros_[i] == NULL) {
-      break;
-    }
-  }
+  i = free_ids_.front();
+  free_ids_.pop_front();
   return i;
 }
 
@@ -140,12 +149,13 @@ Scheduler::Status(int id) {
 }
 
 void
-mainfunc(void *ptr) {
-  Scheduler *sched = (Scheduler *)ptr;
+mainfunc(void *) {
+  Scheduler *sched = &gSched;
   int id = sched->running_;
   Coroutine *coro = sched->coros_[id];
   coro->fun_(coro->arg_);
 
+  sched->free_ids_.push_back(coro->id_);
   delete coro;
   sched->coros_[id] = NULL;
   --sched->num_;

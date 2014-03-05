@@ -38,7 +38,9 @@ public:
   int  Close(int fd);
 private:
   int   NewId();
+  void  AllocateFreeIds();
   void  CheckNetwork();
+
 private:
   int                 epfd_;
   int                 running_;
@@ -46,6 +48,8 @@ private:
   list<Coroutine*>    active_;
   vector<Coroutine*>  coros_;
   vector<Socket*>     socks_;
+  list<int>           free_ids_;
+  int                 free_count_;
   ucontext_t          main_;
 };
 
