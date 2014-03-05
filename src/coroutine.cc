@@ -14,9 +14,6 @@ static const int kDefaulaStackSize = 100 * 1024;
 // coroutine num
 static const int kCoroNum = 256;
 
-// allocate free id num
-static const int kAllocateFreeNum = 100;
-
 static const int kStatusDead    = 0;
 static const int kStatusReady   = 1;
 static const int kStatusRunning = 2;
@@ -64,12 +61,9 @@ struct Socket {
 Scheduler::Scheduler()
   : epfd_(-1),
     running_(-1),
-    num_(0),
-    free_count_(0) {
+    num_(0) {
   coros_.resize(kCoroNum, NULL);
   socks_.resize(kCoroNum, NULL);
-
-  AllocateFreeIds();
 
   epfd_ = epoll_create(1024);
 
@@ -92,33 +86,15 @@ Scheduler::~Scheduler() {
   }
 }
 
-void
-Scheduler::AllocateFreeIds() {
-  int i;
-
-  for (i = 1; i <= kAllocateFreeNum; ++i) {
-    free_ids_.push_back(i + free_count_);
-  }
-  free_count_ += kAllocateFreeNum;
-}
-
-int
-Scheduler::NewId() {
-  int i;
-  if (free_ids_.empty()) {
-    AllocateFreeIds();
-  }
-  i = free_ids_.front();
-  free_ids_.pop_front();
-  return i;
-}
-
 int
 Scheduler::Spawn(void *arg, cfunc fun) {
   int id;
   Coroutine *coro;
 
-  id = NewId();
+  id = id_map_.Allocate();
+  if (id < 0) {
+    return id;
+  }
   coro = new Coroutine(arg, fun, id);
   coros_[id] = coro;
   active_.push_back(coro);
@@ -157,7 +133,7 @@ mainfunc(void *) {
   Coroutine *coro = sched->coros_[id];
   coro->fun_(coro->arg_);
 
-  sched->free_ids_.push_back(coro->id_);
+  sched->id_map_.Free(coro->id_);
   delete coro;
   sched->coros_[id] = NULL;
   --sched->num_;

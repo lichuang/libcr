@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <list>
 #include <vector>
+#include "idmap.h"
 
 using namespace std;
 
@@ -37,8 +38,6 @@ public:
   ssize_t    Send(int fd, const void *buf, size_t len, int flags);
   int  Close(int fd);
 private:
-  int   NewId();
-  void  AllocateFreeIds();
   void  CheckNetwork();
 
 private:
@@ -48,9 +47,8 @@ private:
   list<Coroutine*>    active_;
   vector<Coroutine*>  coros_;
   vector<Socket*>     socks_;
-  list<int>           free_ids_;
-  int                 free_count_;
   ucontext_t          main_;
+  IdMap               id_map_;
 };
 
 extern Scheduler gSched;
