@@ -22,7 +22,9 @@ public:
   int   Spawn(void *arg, cfunc fun);
   void  Yield();
   void  Resume(int id);
+  int   Status(int id);
 
+  void  Run();
 private:
   int   NewId();
 
@@ -30,6 +32,7 @@ private:
   int                 running_;
   size_t              num_;
   list<Coroutine*>    active_;
+  list<Coroutine*>    suspend_;
   vector<Coroutine*>  coros_;
   ucontext_t          main_;
 };

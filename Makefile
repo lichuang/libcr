@@ -22,8 +22,8 @@ all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
 	#$(CC) test/main.c -I./src $(INCLUDE) -o test/test $(LDFLAGS)
 
-ex:$(LIB_DIR)/$(LIB) example/*.cpp
-	$(CC) example/thread.cpp -I./src $(CFLAGS) $(INCLUDE) -o example/thread $(LDFLAGS)
+ex:$(LIB_DIR)/$(LIB) example/*.cc
+	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
 
 test:$(LIB_DIR)/$(LIB)
 	$(CC) test/main.c -I./src $(CFLAGS) $(INCLUDE) -o test/test $(LDFLAGS)

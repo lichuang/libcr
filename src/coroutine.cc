@@ -1,4 +1,5 @@
 //#include <assert.h>
+#include <stdio.h>
 #include "coroutine.h"
 
 // stack size
@@ -12,6 +13,8 @@ static const int kStatusDead    = 0;
 static const int kStatusReady   = 1;
 static const int kStatusRunning = 2;
 static const int kStatusSuspend = 3;
+
+Scheduler gSched;
 
 struct Coroutine {
   void       *arg_;
@@ -44,7 +47,8 @@ Scheduler::Scheduler()
 Scheduler::~Scheduler() {
 }
 
-int Scheduler::NewId() {
+int
+Scheduler::NewId() {
   if (num_ == coros_.size()) {
     coros_.resize(coros_.size() + kCoroNum);
     return num_;
@@ -58,17 +62,21 @@ int Scheduler::NewId() {
   return i;
 }
 
-int Scheduler::Spawn(void *arg, cfunc fun) {
+int
+Scheduler::Spawn(void *arg, cfunc fun) {
   int id;
   Coroutine *coro;
 
   id = NewId();
   coro = new Coroutine(arg, fun, id);
+  coros_[id] = coro;
+  active_.push_back(coro);
 
   return id;
 }
 
-void Scheduler::Yield() {
+void
+Scheduler::Yield() {
   int id;
   Coroutine *coro;
 
@@ -76,7 +84,20 @@ void Scheduler::Yield() {
   coro = coros_[id];
   coro->status_ = kStatusSuspend;
   running_ = -1;
+  suspend_.push_back(coro);
   swapcontext(&coro->ctx_, &main_);
+}
+
+int
+Scheduler::Status(int id) {
+  Coroutine *coro;
+
+  coro = coros_[id];
+  if (coro == NULL) {
+    return kStatusDead;
+  }
+
+  return coro->status_;
 }
 
 void
@@ -85,15 +106,15 @@ mainfunc(void *ptr) {
   int id = sched->running_;
   Coroutine *coro = sched->coros_[id];
   coro->fun_(coro->arg_);
-/*
-  _co_delete(C);
-  S->co[id] = NULL;
-  --S->nco;
-  S->running = -1;
-*/
+
+  delete coro;
+  sched->coros_[id] = NULL;
+  --sched->num_;
+  sched->running_ = -1;
 } 
 
-void Scheduler::Resume(int id) {
+void
+Scheduler::Resume(int id) {
   Coroutine *coro = coros_[id];
 
   if (coro == NULL) {
@@ -103,8 +124,8 @@ void Scheduler::Resume(int id) {
   switch(status) { 
   case kStatusReady:
     getcontext(&coro->ctx_);
-    //coro->ctx.uc_stack.ss_sp = S->stack;
-    //C->ctx.uc_stack.ss_size = STACK_SIZE;
+    coro->ctx_.uc_stack.ss_sp = coro->stack_;
+    coro->ctx_.uc_stack.ss_size = kDefaulaStackSize;
     coro->ctx_.uc_link = &main_;
     running_ = id;
     coro->status_ = kStatusRunning;
@@ -117,7 +138,24 @@ void Scheduler::Resume(int id) {
     swapcontext(&main_, &coro->ctx_);
     break;
   default:
-    //assert(0);
     break;
+  }
+}
+
+void
+Scheduler::Run() {
+  while (1) {
+    list<Coroutine*>::iterator iter;
+
+    for (iter = suspend_.begin(); iter != suspend_.end(); ++iter) {
+      active_.push_back(*iter);
+    }
+
+    suspend_.clear();
+
+    for (iter = active_.begin(); iter != active_.end(); ++iter) {
+      Resume((*iter)->id_);
+    }
+    active_.clear();
   }
 }
