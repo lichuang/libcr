@@ -20,7 +20,7 @@ LDFLAGS= -L ./lib -lcr -ldl
 
 all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
-	#$(CC) test/main.c -I./src $(INCLUDE) -o test/test $(LDFLAGS)
+	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
 
 ex:$(LIB_DIR)/$(LIB) example/*.cc
 	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)

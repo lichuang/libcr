@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 #include <ucontext.h>
+#include <arpa/inet.h> //inet_addr
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/socket.h>
 #include <list>
 #include <vector>
 
@@ -11,6 +15,7 @@ using namespace std;
 typedef void* (*cfunc)(void*);
 
 struct Coroutine;
+struct Socket;
 void mainfunc(void *ptr);
 
 class Scheduler {
@@ -25,15 +30,22 @@ public:
   int   Status(int id);
 
   void  Run();
+
+  int   Accept(int sockfd, struct sockaddr *addr,
+               socklen_t *addrlen);
+
+  ssize_t    Recv(int fd, void *buf, size_t len, int flags);
+  ssize_t    Send(int fd, const void *buf, size_t len, int flags);
 private:
   int   NewId();
-
+  void  CheckNetwork();
 private:
+  int                 epfd_;
   int                 running_;
   size_t              num_;
   list<Coroutine*>    active_;
-  list<Coroutine*>    suspend_;
   vector<Coroutine*>  coros_;
+  vector<Socket*>     socks_;
   ucontext_t          main_;
 };
 

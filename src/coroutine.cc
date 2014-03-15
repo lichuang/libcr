@@ -1,5 +1,11 @@
 //#include <assert.h>
+#include <errno.h>
+#include <dlfcn.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <unistd.h>
 #include "coroutine.h"
 
 // stack size
@@ -13,6 +19,14 @@ static const int kStatusDead    = 0;
 static const int kStatusReady   = 1;
 static const int kStatusRunning = 2;
 static const int kStatusSuspend = 3;
+
+typedef int (*sysAccept)(int, struct sockaddr *, socklen_t *);
+typedef ssize_t (*sysRecv)(int fd, void *buf, size_t len, int flags);
+typedef ssize_t (*sysSend)(int fd, const void *buf, size_t len, int flags);
+
+static sysAccept gSysAccept;
+static sysRecv   gSysRecv;
+static sysSend   gSysSend;
 
 Scheduler gSched;
 
@@ -38,10 +52,23 @@ struct Coroutine {
   }
 };
 
+struct Socket {
+  int         fd_;
+  Coroutine*  coro_;  
+};
+
 Scheduler::Scheduler()
-  : running_(-1),
+  : epfd_(-1),
+    running_(-1),
     num_(0) {
   coros_.resize(kCoroNum, NULL);
+  socks_.resize(num_ + kCoroNum);
+
+  epfd_ = epoll_create(1024);
+
+  gSysAccept = (sysAccept)dlsym(RTLD_NEXT, "accept");
+  gSysRecv   = (sysRecv)dlsym(RTLD_NEXT, "recv");
+  gSysSend   = (sysSend)dlsym(RTLD_NEXT, "send");
 }
 
 Scheduler::~Scheduler() {
@@ -50,7 +77,8 @@ Scheduler::~Scheduler() {
 int
 Scheduler::NewId() {
   if (num_ == coros_.size()) {
-    coros_.resize(coros_.size() + kCoroNum);
+    coros_.resize(num_ + kCoroNum);
+    socks_.resize(num_ + kCoroNum);
     return num_;
   }
   size_t i;
@@ -84,7 +112,6 @@ Scheduler::Yield() {
   coro = coros_[id];
   coro->status_ = kStatusSuspend;
   running_ = -1;
-  suspend_.push_back(coro);
   swapcontext(&coro->ctx_, &main_);
 }
 
@@ -146,16 +173,178 @@ void
 Scheduler::Run() {
   while (1) {
     list<Coroutine*>::iterator iter;
-
-    for (iter = suspend_.begin(); iter != suspend_.end(); ++iter) {
-      active_.push_back(*iter);
-    }
-
-    suspend_.clear();
-
     for (iter = active_.begin(); iter != active_.end(); ++iter) {
       Resume((*iter)->id_);
     }
-    active_.clear();
+    CheckNetwork();
   }
+}
+
+int
+Scheduler::Accept(int fd, struct sockaddr *addr,
+                  socklen_t *addrlen) {
+  Coroutine *coro = coros_[running_];
+
+  epoll_event ev;
+  memset(&ev, 0, sizeof(struct epoll_event));
+  Socket *sock = socks_[fd];
+  if (sock == NULL) {
+    sock = new Socket();
+    socks_[fd] = sock;
+    sock->fd_   = fd;
+    sock->coro_ = coro;
+  }
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLIN;
+
+  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    printf("epoll_ctl error:%s\n", strerror(errno));
+    return -1;
+  }
+  coro->status_ = kStatusSuspend;
+  swapcontext(&coro->ctx_, &main_);
+  epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+
+  int s;
+  do { 
+    s = gSysAccept(fd, addr, addrlen);
+    if (s < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        coro->status_ = kStatusSuspend;
+        swapcontext(&coro->ctx_, &main_);
+        epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+        continue;
+      }
+      printf("accept errno: %s\n", strerror(errno));
+      return -1;
+    }
+    fcntl(s, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    break;
+  } while(true);
+
+  return s;
+}
+
+void
+Scheduler::CheckNetwork() {
+  epoll_event events[1024];
+  int nfds = epoll_wait(epfd_, events, 1024, -1);
+
+  if (nfds > 0) { 
+    int i;
+    Socket *sock;
+
+    for(i = 0 ; i < nfds ; ++i) {
+      if(events[i].events & (EPOLLIN || EPOLLOUT)) {
+        sock = (Socket*)events[i].data.ptr;
+        active_.push_back(sock->coro_);
+        continue;
+      }
+    }
+  } else {
+    printf("epoll error: %s:%d\n", strerror(errno), errno);
+  }
+}
+
+ssize_t
+Scheduler::Recv(int fd, void *buf, size_t len, int flags) {
+  ssize_t     ret;
+  Coroutine *coro = coros_[running_];
+  epoll_event ev;
+
+  memset(&ev, 0, sizeof(struct epoll_event));
+  Socket *sock = socks_[fd];
+  if (sock == NULL) {
+    sock = new Socket();
+    socks_[fd] = sock;
+  }
+  sock->fd_ = fd;
+  sock->coro_ = coro;
+
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLIN;
+  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    printf("recv add epoll error: %s\n", strerror(errno));
+    return -1;
+  }
+  coro->status_ = kStatusSuspend;
+  swapcontext(&coro->ctx_, &main_);
+  epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+
+  ret = 0;
+  while (ret < (ssize_t)len) {
+    ssize_t nbytes = gSysRecv(fd, (char*)buf + ret, len - ret, flags);
+    if (nbytes == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        coro->status_ = kStatusSuspend;
+        swapcontext(&coro->ctx_, &main_);
+        epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+        continue;
+      } else if (errno != EINTR) {
+        return -1;
+      }
+    }
+
+    if (nbytes == 0) {
+      return -1;
+    }
+
+    ret += nbytes;
+    if (nbytes < (ssize_t)len - ret) {
+      break;
+    }
+  }
+
+  return ret;
+}
+
+ssize_t
+Scheduler::Send(int fd, const void *buf, size_t len, int flags) {
+  Coroutine *coro = coros_[running_];
+  ssize_t     ret;
+
+  epoll_event ev;
+  memset(&ev, 0, sizeof(struct epoll_event));
+  Socket *sock = socks_[fd];
+  if (sock == NULL) {
+    sock = new Socket();
+    socks_[fd] = sock;
+  }
+  sock->fd_ = fd;
+  sock->coro_ = coro;
+
+  ev.data.ptr = (void*)sock;
+  ev.events = EPOLLOUT;
+  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
+    return -1;
+  }
+  coro->status_ = kStatusSuspend;
+  swapcontext(&coro->ctx_, &main_);
+  epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+
+  ret = 0;
+  while (ret < (ssize_t)len) {
+    ssize_t nbytes = gSysSend(fd, (char*)buf + ret, len - ret, flags | MSG_NOSIGNAL);
+    if (nbytes == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        coro->status_ = kStatusSuspend;
+        swapcontext(&coro->ctx_, &main_);
+        epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, &ev);
+        continue;
+      } else if (errno != EINTR) {
+        return -1;
+      }
+    }
+
+    if (nbytes == 0) {
+      return -1;
+    }
+
+    ret += nbytes;
+    if (ret == (ssize_t)len) {
+      break;
+    }
+  }
+
+  return ret;
 }
