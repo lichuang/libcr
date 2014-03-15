@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
 #include "coroutine.h"
-//#include <sys/syscall.h>
 
 extern Scheduler gSched;
 
@@ -27,5 +26,10 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
 #undef send
 ssize_t send(int fd, const void *buf, size_t len, int flags) {
   return gSched.Send(fd, buf, len, flags);
+}
+
+#undef close
+int close(int fd) {
+  return gSched.Close(fd);
 }
 }

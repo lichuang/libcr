@@ -33,9 +33,9 @@ public:
 
   int   Accept(int sockfd, struct sockaddr *addr,
                socklen_t *addrlen);
-
   ssize_t    Recv(int fd, void *buf, size_t len, int flags);
   ssize_t    Send(int fd, const void *buf, size_t len, int flags);
+  int  Close(int fd);
 private:
   int   NewId();
   void  CheckNetwork();

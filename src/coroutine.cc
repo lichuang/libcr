@@ -1,4 +1,3 @@
-//#include <assert.h>
 #include <errno.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -23,10 +22,12 @@ static const int kStatusSuspend = 3;
 typedef int (*sysAccept)(int, struct sockaddr *, socklen_t *);
 typedef ssize_t (*sysRecv)(int fd, void *buf, size_t len, int flags);
 typedef ssize_t (*sysSend)(int fd, const void *buf, size_t len, int flags);
+typedef int (*sysClose)(int fd);
 
 static sysAccept gSysAccept;
 static sysRecv   gSysRecv;
 static sysSend   gSysSend;
+static sysClose  gSysClose;
 
 Scheduler gSched;
 
@@ -62,16 +63,27 @@ Scheduler::Scheduler()
     running_(-1),
     num_(0) {
   coros_.resize(kCoroNum, NULL);
-  socks_.resize(num_ + kCoroNum);
+  socks_.resize(kCoroNum, NULL);
 
   epfd_ = epoll_create(1024);
 
   gSysAccept = (sysAccept)dlsym(RTLD_NEXT, "accept");
   gSysRecv   = (sysRecv)dlsym(RTLD_NEXT, "recv");
   gSysSend   = (sysSend)dlsym(RTLD_NEXT, "send");
+  gSysClose  = (sysClose)dlsym(RTLD_NEXT, "close"); 
 }
 
 Scheduler::~Scheduler() {
+  size_t i;
+
+  for (i = 0; i < coros_.size(); ++i) {
+    if (coros_[i]) {
+      delete coros_[i];
+    }
+    if (socks_[i]) {
+      delete socks_[i];
+    } 
+  }
 }
 
 int
@@ -189,8 +201,8 @@ Scheduler::Accept(int fd, struct sockaddr *addr,
   memset(&ev, 0, sizeof(struct epoll_event));
   Socket *sock = socks_[fd];
   if (sock == NULL) {
-    sock = new Socket();
-    socks_[fd] = sock;
+    sock        = new Socket();
+    socks_[fd]  = sock;
     sock->fd_   = fd;
     sock->coro_ = coro;
   }
@@ -257,9 +269,9 @@ Scheduler::Recv(int fd, void *buf, size_t len, int flags) {
   if (sock == NULL) {
     sock = new Socket();
     socks_[fd] = sock;
+    sock->fd_ = fd;
+    sock->coro_ = coro;
   }
-  sock->fd_ = fd;
-  sock->coro_ = coro;
 
   ev.data.ptr = (void*)sock;
   ev.events = EPOLLIN;
@@ -309,9 +321,9 @@ Scheduler::Send(int fd, const void *buf, size_t len, int flags) {
   if (sock == NULL) {
     sock = new Socket();
     socks_[fd] = sock;
+    sock->fd_ = fd;
+    sock->coro_ = coro;
   }
-  sock->fd_ = fd;
-  sock->coro_ = coro;
 
   ev.data.ptr = (void*)sock;
   ev.events = EPOLLOUT;
@@ -347,4 +359,13 @@ Scheduler::Send(int fd, const void *buf, size_t len, int flags) {
   }
 
   return ret;
+}
+
+int
+Scheduler::Close(int fd) {
+  if (socks_[fd]) {
+    delete socks_[fd];
+    socks_[fd] = NULL;
+  }
+  return gSysClose(fd);
 }
