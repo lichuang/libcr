@@ -2,6 +2,9 @@
 *.o
 *.ko
 
+cscope*
+tag*
+
 # Libraries
 *.lib
 *.a
