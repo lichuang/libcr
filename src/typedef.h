@@ -1,13 +1,20 @@
 #ifndef __TYPEDEF_H__
 #define __TYPEDEF_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // innner struct typedef
 
 struct env_t;
 typedef struct env_t env_t;
 
-struct epoll_t;
-typedef struct epoll_t epoll_t;
+struct epoll_context_t;
+typedef struct epoll_context_t epoll_context_t;
+
+struct epoll_result_t;
+typedef struct epoll_result_t epoll_result_t;
 
 struct context_t;
 typedef struct context_t context_t;
@@ -21,7 +28,11 @@ typedef struct timer_item_t timer_item_t;
 struct timer_list_t;
 typedef struct timer_list_t timer_list_t;
 
-struct timer_t;
-typedef struct timer_t timer_t;
+struct epoll_timer_t;
+typedef struct epoll_timer_t epoll_timer_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // __TYPEDEF_H__

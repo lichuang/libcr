@@ -4,6 +4,7 @@
 
 cscope*
 tag*
+*swp
 
 # Libraries
 *.lib

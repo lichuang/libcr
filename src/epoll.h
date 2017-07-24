@@ -3,6 +3,7 @@
 
 #include <sys/epoll.h>
 #include "typedef.h"
+#include "coroutine.h"
 
 typedef void (*prepare_fun_t)(timer_item_t *,struct epoll_event &ev, timer_list_t *active);
 typedef void (*process_fun_t)(timer_item_t *);
@@ -16,6 +17,7 @@ struct timer_item_t {
   prepare_fun_t prepare;  
   process_fun_t process;  
 
+  coroutine_t *coroutine;
   void *arg;
   bool timeout;
 };
@@ -25,12 +27,12 @@ struct timer_list_t {
   timer_item_t *tail;
 };
 
-struct timer_t {
+struct epoll_timer_t {
   int size;
-  time_list_t items;
+  timer_list_t *items;
 
   unsigned long long start;
-  long long startIdx;
+  long long start_idx;
 };
 
 struct epoll_result_t {
@@ -38,18 +40,28 @@ struct epoll_result_t {
   struct epoll_event *events;
 };
 
-struct epoll_t {
+struct epoll_context_t {
   int fd;
   int size;
 
-  timer_t *timer;
-  time_list_t *timeout_list;
-  time_list_t *active_list;
+  epoll_timer_t *timer;
+  timer_list_t *timeout_list;
+  timer_list_t *active_list;
 
   epoll_result_t *result;
 };
 
-epoll_t* epoll_create(int size);
-void eventloop(epoll_t *);
+epoll_context_t* alloc_epoll(int size);
+int do_epoll_wait(int epfd, epoll_result_t *result,int maxevents,int timeout);
+int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev);
+int do_epoll_create(int size);
+
+int addTimeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now);
+void removeFromLink(timer_item_t *item);
+void addTail(timer_list_t *list, timer_item_t *item);
+
+int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev);
+
+void eventloop();
 
 #endif  // __EPOLL_H__

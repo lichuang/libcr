@@ -1,20 +1,22 @@
 #include <string.h>
+#include <stdlib.h>
+#include "coroutine_impl.h"
 #include "epoll.h"
 #include "misc.h"
 
-int co_epoll_wait(int epfd, epoll_result_t *result,int maxevents,int timeout) {
+int do_epoll_wait(int epfd, epoll_result_t *result,int maxevents,int timeout) {
   return epoll_wait(epfd,result->events,maxevents,timeout);
 }
 
-int co_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev) {
+int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev) {
   return epoll_ctl(epfd,op,fd,ev);
 }
 
-int co_epoll_create(int size) {
+int do_epoll_create(int size) {
   return epoll_create(size);
 }
 
-epoll_result_t* co_epoll_res_alloc(int n) {
+static epoll_result_t* alloc_epoll_result(int n) {
   epoll_result_t* ret = (epoll_result_t*)malloc(sizeof(epoll_result_t));
 
   ret->size = n;
@@ -23,7 +25,7 @@ epoll_result_t* co_epoll_res_alloc(int n) {
   return ret;
 }
 
-void co_epoll_res_free(epoll_result_t *ret) {
+static void free_epoll_result(epoll_result_t *ret) {
   if(!ret) {
     return;
   }
@@ -35,26 +37,26 @@ void co_epoll_res_free(epoll_result_t *ret) {
   free(ret);
 }
 
-static timer_t* alloc_timer(int size) {
-  timer_t *timer = (timer_t*)calloc(1, sizeof(timer_t));
+static epoll_timer_t* alloc_timer(int size) {
+  epoll_timer_t *timer = (epoll_timer_t*)calloc(1, sizeof(epoll_timer_t));
   timer->size = size;
 
-  timer->items = (time_list_t*)calloc(size, sizeof(timer_list_t));
-  timer->startIdx = 0;
+  timer->items = (timer_list_t*)calloc(size, sizeof(timer_list_t));
+  timer->start_idx = 0;
   timer->start = GetTickMS();
 
   return timer;
 }
 
-void free_timer(timer_t *timer) {
+void free_timer(epoll_timer_t *timer) {
   free(timer->items);
   free(timer);
 }
 
-epoll_t* alloc_epoll(int size) {
-  epoll_t *ep = (epoll_t*)calloc(1, sizeof(epoll_t));
+epoll_context_t* alloc_epoll(int size) {
+  epoll_context_t *ep = (epoll_context_t*)calloc(1, sizeof(epoll_context_t));
 
-  ep->fd = co_epoll_create(size);
+  ep->fd = do_epoll_create(size);
   ep->timer = alloc_timer(60000);
   ep->active_list = (timer_list_t*)calloc(1, sizeof(timer_list_t));
   ep->timeout_list = (timer_list_t*)calloc(1, sizeof(timer_list_t));
@@ -64,11 +66,11 @@ epoll_t* alloc_epoll(int size) {
   return ep;
 }
 
-void free_epoll(epoll_t *epoll) {
+void free_epoll(epoll_context_t *epoll) {
   if (epoll != NULL) {
     free(epoll->active_list);
     free(epoll->timeout_list);
-    co_epoll_res_free(epoll->result);
+    free_epoll_result(epoll->result);
     free_timer(epoll->timer);
 
     free(epoll);
@@ -119,10 +121,10 @@ static inline void join(timer_list_t *list, timer_list_t *other) {
   other->head = other->tail = NULL;
 }
 
-static inline void takeAllTimeout(timer_t *timer, unsigned long long now, timer_list_t *result) {
+static inline void takeAllTimeout(epoll_timer_t *timer, unsigned long long now, timer_list_t *result) {
   if (timer->start == 0) {
     timer->start = now;
-    timer->startIdx = 0;
+    timer->start_idx = 0;
   }
 
   if (now < timer->start) {
@@ -139,15 +141,15 @@ static inline void takeAllTimeout(timer_t *timer, unsigned long long now, timer_
 
   int i;
   for (i = 0; i < cnt; i++) {
-    int idx = (timer->startIdx + i) % timer->size;
+    int idx = (timer->start_idx + i) % timer->size;
     join(result, timer->items + idx);
   }
 
   timer->start = now;
-  timer->startIdx = cnt - 1;
+  timer->start_idx = cnt - 1;
 }
 
-static inline void addTail(timer_list_t *list, timer_item_t *item) {
+void addTail(timer_list_t *list, timer_item_t *item) {
   if (item->parent != NULL) {
     return;
   }
@@ -165,18 +167,56 @@ static inline void addTail(timer_list_t *list, timer_item_t *item) {
   item->parent = list;
 }
 
-void eventloop(epoll_t *epoll) {
-  if (epoll->result == NULL) {
-    epoll->result = co_epoll_res_alloc(ep->size);
+void removeFromLink(timer_item_t *item) {
+  timer_list_t *list = item->parent;
+  if (!list) {
+    return;
   }
-  epoll_result_t *result = result;
+
+  if (item == list->head) {
+    list->head = item->next;
+    if (list->head) {
+      list->head->prev = NULL;
+    }
+  } else {
+    if (item->prev) {
+      item->prev->next = item->next;
+    }
+  }
+
+  if (item == list->tail) {
+    list->tail = item->prev;
+    if (list->tail) {
+      list->tail->next = NULL;
+    }
+  } else {
+    item->next->prev = item->prev;
+  }
+
+  item->prev = item->next = NULL;
+  item->parent = NULL;
+}
+
+void eventloop() {
+  env_t *env = get_curr_thread_env();
+  if (env == NULL) {
+    init_curr_thread_env();
+    env = get_curr_thread_env();
+  }
+
+  epoll_context_t *epoll = env->epoll;
+
+  if (epoll->result == NULL) {
+    epoll->result = alloc_epoll_result(epoll->size);
+  }
+  epoll_result_t *result = epoll->result;
 
   while (true) {
     int i;
-    int ret = co_epoll_wait(ep->fd, result, ep->size, 1);
+    int ret = do_epoll_wait(epoll->fd, result, epoll->size, 1);
 
-    timer_list_t *active = ep->active_list;
-    timer_list_t *timeout = ep->timeout_list;
+    timer_list_t *active = epoll->active_list;
+    timer_list_t *timeout = epoll->timeout_list;
 
     memset(timeout, 0, sizeof(timer_list_t));
     for (i = 0; i < ret; i++) {
@@ -197,16 +237,39 @@ void eventloop(epoll_t *epoll) {
       item = item->next;
     }
 
-    join(active, timeout;);
+    join(active, timeout);
 
     item = active->head;
     while (item != NULL) {
       popHead(active);
       if (item->process != NULL) {
-        item->process(process);
+        item->process(item);
       }
 
       item = active->head;
     }
   }
+}
+
+int addTimeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now) {
+	if(timer->start == 0) {
+		timer->start = now;
+		timer->start_idx = 0;
+	}
+	if(now < timer->start) {
+		return -1;
+	}
+
+	if(item->expire < now) {
+    return -1;
+	}
+	int diff = item->expire - timer->start;
+
+	if(diff >= timer->size) {
+    return -1;
+	}
+
+	addTail(timer->items + (timer->start_idx + diff) % timer->size, item);
+
+	return 0;
 }

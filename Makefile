@@ -12,7 +12,7 @@ DEPS=$(patsubst $(OBJ_DIR)/%.o, $(DEPS_DIR)/%.d, $(OBJS))
 
 INCLUDE= 
 		
-CC=g++
+CC=gcc
 AR= ar rcu
 CFLAGS=-Wall -Werror -g 
 #LDFLAGS= -L ./lib -lcr -pthread
@@ -20,7 +20,7 @@ LDFLAGS= -L ./lib -lcr -ldl
 
 all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
-	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
+	#$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
 
 ex:$(LIB_DIR)/$(LIB) example/*.cc
 	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)

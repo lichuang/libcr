@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <sys/time.h>
 #include "misc.h"
 
 unsigned long long GetTickMS() {
