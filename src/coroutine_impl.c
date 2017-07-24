@@ -341,6 +341,10 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	return raise_cnt;
 }
 
+int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms) {
+	return poll_inner(ctx, fds, nfds, timeout_ms, NULL);
+}
+
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 extern void once_init();
 

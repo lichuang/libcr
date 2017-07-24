@@ -55,9 +55,14 @@ struct coroutine_t {
 typedef int (*poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);
 int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeout, poll_fun_t pollfunc);
 
+int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms);
+epoll_context_t *get_epoll_context();
+
 env_t* get_curr_thread_env();
 void init_curr_thread_env();
 
+void enable_sys_hook();
+char is_enable_sys_hook();
 #ifdef __cplusplus
 }
 #endif
