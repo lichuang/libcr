@@ -5,7 +5,7 @@
 #include "typedef.h"
 #include "coroutine.h"
 
-typedef void (*prepare_fun_t)(timer_item_t *,struct epoll_event &ev, timer_list_t *active);
+typedef void (*prepare_fun_t)(timer_item_t *,struct epoll_event *ev, timer_list_t *active);
 typedef void (*process_fun_t)(timer_item_t *);
 
 struct timer_item_t {
@@ -19,7 +19,7 @@ struct timer_item_t {
 
   coroutine_t *coroutine;
   void *arg;
-  bool timeout;
+  char timeout;
 };
 
 struct timer_list_t {

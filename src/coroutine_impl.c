@@ -4,12 +4,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/poll.h>
+#include <poll.h>
 #include "assert.h"
 #include "coroutine.h"
 #include "coroutine_impl.h"
 #include "context.h"
 #include "misc.h"
 
+static const int kMaxCallStack = 128;
 static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
 static const int kMaxTimeoutMs = 40 * 1000;
@@ -67,10 +70,11 @@ void init_curr_thread_env() {
 
   pid = get_pid();
   env = (env_t*)calloc(1, sizeof(env_t));
+  env->callstack = (coroutine_t**)calloc(kMaxCallStack, sizeof(coroutine_t*));
   gEnv[pid] = env;
 
   coroutine_t *co = create_env(env, NULL, NULL, NULL);
-  co->main = true;
+  co->main = 1;
 
   context_init(&co->context);
   env->callstack[env->callstacksize++] = co;
@@ -129,7 +133,8 @@ static void yield_env(env_t *env) {
   coroutine_swap(curr, last);
 }
 
-static int cotoutine_main(void *arg, void *) {
+static int coroutine_main(void *arg, void *s1) {
+  (void)s1;
   coroutine_t *co = (coroutine_t*)arg;
   if (co->fun) {
     co->fun(co->arg);
@@ -145,7 +150,7 @@ void coroutine_resume(coroutine_t *co) {
   env_t *env = co->env;
   coroutine_t *curr = env->callstack[env->callstacksize - 1];
   if (co->state != RUNNING) {
-    context_make(&co->context, cotoutine_main, co, NULL);
+    context_make(&co->context, coroutine_main, co, NULL);
     co->state = RUNNING;
   }
 
@@ -191,7 +196,7 @@ typedef struct poll_context_t {
   timer_item_t time;
   poll_item_t *items;
 
-  bool allEventDetatch;
+  char allEventDetatch;
 
   int raise_cnt;
 } poll_context_t;
@@ -211,8 +216,8 @@ static inline uint32_t PollEvent2Epoll(short events) {
 	if( events & POLLOUT )  e |= EPOLLOUT;
 	if( events & POLLHUP ) 	e |= EPOLLHUP;
 	if( events & POLLERR )	e |= EPOLLERR;
-	if( events & POLLRDNORM ) e |= EPOLLRDNORM;
-	if( events & POLLWRNORM ) e |= EPOLLWRNORM;
+	if( events & POLLIN ) e |= EPOLLIN;
+	if( events & POLLOUT ) e |= EPOLLOUT;
 	return e;
 }
 
@@ -222,8 +227,8 @@ static inline short EpollEvent2Poll(uint32_t events) {
 	if( events & EPOLLOUT ) e |= POLLOUT;
 	if( events & EPOLLHUP ) e |= POLLHUP;
 	if( events & EPOLLERR ) e |= POLLERR;
-	if( events & EPOLLRDNORM ) e |= POLLRDNORM;
-	if( events & EPOLLWRNORM ) e |= POLLWRNORM;
+	if( events & EPOLLIN ) e |= POLLIN;
+	if( events & EPOLLOUT ) e |= POLLOUT;
 	return e;
 }
 
@@ -231,15 +236,15 @@ static void processPollEvent(timer_item_t *item) {
   coroutine_resume(item->coroutine);
 }
 
-static void preparePollEvent(timer_item_t *item,struct epoll_event &e,timer_list_t *active) {
+static void preparePollEvent(timer_item_t *item,struct epoll_event *ev,timer_list_t *active) {
   poll_item_t *poll_item = (poll_item_t*)item->arg;
-	poll_item->self->revents = EpollEvent2Poll(e.events);
+	poll_item->self->revents = EpollEvent2Poll(ev->events);
 
 	poll_context_t *poll = poll_item->poll;
 	poll->raise_cnt++;
 
 	if (!poll->allEventDetatch) {
-		poll->allEventDetatch = true;
+		poll->allEventDetatch = 1;
 		removeFromLink(&poll->time);
 		addTail(active, &poll->time);
 	}
@@ -256,7 +261,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	poll_context_t arg;
 	memset(&arg,0,sizeof(arg));
 
-	arg.fds = (pollfd*)calloc(nfds, sizeof(pollfd));
+	arg.fds = (struct pollfd*)calloc(nfds, sizeof(struct pollfd));
 	arg.nfds = nfds;
 
 	poll_item_t items[2];
@@ -279,13 +284,13 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 		arg.items[i].time.prepare = preparePollEvent;
 		arg.items[i].time.coroutine = self;
 		arg.items[i].time.arg = &(arg.items[i]);
-		struct epoll_event &ev = arg.items[i].event;
+		struct epoll_event *ev = &(arg.items[i].event);
 
 		if(fds[i].fd > -1) {
-			ev.data.ptr = arg.items + i;
-			ev.events = PollEvent2Epoll(fds[i].events);
+			ev->data.ptr = arg.items + i;
+			ev->events = PollEvent2Epoll(fds[i].events);
 
-			int ret = do_epoll_ctl(epfd,EPOLL_CTL_ADD, fds[i].fd, &ev);
+			int ret = do_epoll_ctl(epfd,EPOLL_CTL_ADD, fds[i].fd, ev);
 			if (ret < 0 && errno == EPERM && nfds == 1 && pollfunc != NULL) {
 				if(arg.items != items) {
 					free(arg.items);
@@ -334,4 +339,11 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
   free(arg.fds);
 
 	return raise_cnt;
+}
+
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+extern void once_init();
+
+void coroutine_init_env() {
+  pthread_once(&once, once_init);
 }

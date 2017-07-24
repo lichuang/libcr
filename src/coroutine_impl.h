@@ -10,10 +10,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-static const int kMaxCallStack = 128;
 
 struct env_t {
-  coroutine_t *callstack[kMaxCallStack];
+  coroutine_t **callstack;
   int callstacksize;
   coroutine_t *main;
   epoll_context_t *epoll;
@@ -29,18 +28,18 @@ struct stack_t {
   char *start;
 };
 
-enum state_t {
+typedef enum state_t {
   INIT,
   RUNNING,
   STOPPED
-};
+} state_t;
 
 struct coroutine_t {
   coroutine_fun_t fun;
   env_t *env;
   void *arg;
-  bool main;
-  bool enable_sys_hook;
+  char main;
+  char enable_sys_hook;
 
   state_t state;
 

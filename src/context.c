@@ -69,10 +69,12 @@ typedef struct param_t
 } param_t;
 
 //64 bit
+/*
 extern "C"
 {
 	extern void context_swap( context_t *,context_t* ) asm("context_swap");
 };
+*/
 
 int context_init(context_t *context) {
   memset(context, 0, sizeof(context_t));

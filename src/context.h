@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include "coroutine.h"
+#include "typedef.h"
 
 struct context_t {
 #if defined(__i386__)

@@ -14,7 +14,8 @@ INCLUDE=
 		
 CC=gcc
 AR= ar rcu
-CFLAGS=-Wall -Werror -g 
+#CFLAGS=-std=c99 -Wall -Werror -g 
+CFLAGS=-std=c99 -Wall -g 
 #LDFLAGS= -L ./lib -lcr -pthread
 LDFLAGS= -L ./lib -lcr -ldl
 

@@ -211,7 +211,7 @@ void eventloop() {
   }
   epoll_result_t *result = epoll->result;
 
-  while (true) {
+  while (1) {
     int i;
     int ret = do_epoll_wait(epoll->fd, result, epoll->size, 1);
 
@@ -222,7 +222,7 @@ void eventloop() {
     for (i = 0; i < ret; i++) {
       timer_item_t *item = (timer_item_t*)result->events[i].data.ptr;
       if (item->prepare) {
-        item->prepare(item, result->events[i], active);
+        item->prepare(item, &result->events[i], active);
       } else {
         addTail(active, item);
       }
@@ -233,7 +233,7 @@ void eventloop() {
 
     timer_item_t *item = timeout->head;
     while (item != NULL) {
-      item->timeout = true;
+      item->timeout = 1;
       item = item->next;
     }
 
