@@ -26,6 +26,7 @@
 #include <time.h>
 
 typedef int (*socket_pfn_t)(int domain, int type, int protocol);
+typedef int (*accept_pfn_t)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 typedef int (*connect_pfn_t)(int socket, const struct sockaddr *address, socklen_t address_len);
 typedef int (*close_pfn_t)(int fd);
 
@@ -62,6 +63,7 @@ typedef int (*__poll_pfn_t)(struct pollfd fds[], nfds_t nfds, int timeout);
 
 // hook system functions
 static socket_pfn_t gSysSocket;
+static accept_pfn_t gSysAccept;
 static connect_pfn_t gSysConnect;
 static close_pfn_t gSysClose;
 
@@ -90,6 +92,7 @@ static __poll_pfn_t g_sys___poll_func;
 
 void once_init() {
   gSysSocket   = (socket_pfn_t)dlsym(RTLD_NEXT,"socket");
+  gSysAccept   = (accept_pfn_t)dlsym(RTLD_NEXT,"accept");
   gSysConnect = (connect_pfn_t)dlsym(RTLD_NEXT,"connect");
   gSysClose   = (close_pfn_t)dlsym(RTLD_NEXT,"close");
 
