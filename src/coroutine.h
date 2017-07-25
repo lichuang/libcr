@@ -13,11 +13,14 @@ typedef struct coroutine_options_t {
   int stack_size;
 
   char enable_sys_hook;
+
+  int max_io_timeout_ms;
+
+  int task_per_thread;
 } coroutine_options_t;
 
 void coroutine_init_env(const coroutine_options_t *options);
-coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg);
-void coroutine_resume(coroutine_t *co);
+void coroutine_new_task(coroutine_fun_t fun, void *arg);
 void coroutine_eventloop();
 
 #ifdef __cplusplus

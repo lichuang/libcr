@@ -31,6 +31,12 @@ typedef struct timer_list_t timer_list_t;
 struct epoll_timer_t;
 typedef struct epoll_timer_t epoll_timer_t;
 
+struct task_t;
+typedef struct task_t task_t;
+
+struct taskpool_t;
+typedef struct taskpool_t taskpool_t;
+
 #ifdef __cplusplus
 }
 #endif

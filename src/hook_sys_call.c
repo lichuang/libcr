@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/syscall.h>
@@ -25,6 +25,8 @@
 
 #include <time.h>
 #include "coroutine_impl.h"
+
+extern coroutine_options_t gOptions;
 
 typedef int (*socket_pfn_t)(int domain, int type, int protocol);
 typedef int (*accept_pfn_t)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
@@ -91,36 +93,43 @@ static gethostbyname_pfn_t g_sys_gethostbyname_func;
 
 static __poll_pfn_t g_sys___poll_func;
 
-typedef struct rpchook_t
-{
+typedef struct rpchook_t {
 	int user_flag;
 	struct sockaddr_in dest; //maybe sockaddr_un;
 	int domain; //AF_LOCAL , AF_INET
 
 	struct timeval read_timeout;
 	struct timeval write_timeout;
-}rpchook_t;
+} rpchook_t;
 static rpchook_t *gSocketFd[ 102400 ] = { 0 };
 
-static inline rpchook_t* get_by_fd(int fd) {
+static inline int getMaxIoTimeoutMs() {
+  return gOptions.max_io_timeout_ms;
+}
+
+static inline char isEnableSysHook() {
+  return gOptions.enable_sys_hook;
+}
+
+static inline rpchook_t* getByFd(int fd) {
 	if( fd > -1 && fd < (int)sizeof(gSocketFd) / (int)sizeof(gSocketFd[0]) ) {
 		return gSocketFd[fd];
 	}
 	return NULL;
 }
 
-static inline rpchook_t * alloc_by_fd(int fd) {
+static inline rpchook_t * allocByFd(int fd) {
 	if( fd > -1 && fd < (int)sizeof(gSocketFd) / (int)sizeof(gSocketFd[0]) ) {
 		rpchook_t *lp = (rpchook_t*)calloc(1,sizeof(rpchook_t));
-		lp->read_timeout.tv_sec = 1;
-		lp->write_timeout.tv_sec = 1;
+		lp->read_timeout.tv_sec = getMaxIoTimeoutMs() * 1000;
+		lp->write_timeout.tv_sec = getMaxIoTimeoutMs() * 1000;
 		gSocketFd[ fd ] = lp;
 		return lp;
 	}
 	return NULL;
 }
 
-static inline void free_by_fd(int fd) {
+static inline void freeByFd(int fd) {
 	if(fd > -1 && fd < (int)sizeof(gSocketFd) / (int)sizeof(gSocketFd[0])) {
 		rpchook_t *lp = gSocketFd[fd];
 		if(lp) {
@@ -132,7 +141,7 @@ static inline void free_by_fd(int fd) {
 }
 
 int socket(int domain, int type, int protocol) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysSocket(domain,type,protocol);
 	}
 	int fd = gSysSocket(domain,type,protocol);
@@ -140,7 +149,7 @@ int socket(int domain, int type, int protocol) {
 		return fd;
 	}
 
-	rpchook_t *lp = alloc_by_fd( fd );
+	rpchook_t *lp = allocByFd(fd);
 	lp->domain = domain;
 	
   // set socket fd as non block by default
@@ -158,15 +167,16 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
         struct pollfd pf = {0};
         pf.fd = listen_fd;
         pf.events = (POLLIN|POLLERR|POLLHUP);
-        coroutine_poll(get_epoll_context(),&pf,1,1000);
+        coroutine_poll(get_epoll_context(),&pf,1,getMaxIoTimeoutMs());
 	      fd = gSysAccept(listen_fd,addr,len);
         continue;
       }
+      printf("here: %d\n", errno);
       return fd;
     }
   } while (fd < 0);
 
-	rpchook_t *lp = alloc_by_fd(fd);
+	rpchook_t *lp = allocByFd(fd);
 
   int current_flags = gSysFcntl(fd ,F_GETFL, 0);
   int flag = current_flags;
@@ -174,7 +184,7 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
 
   // set socket fd as non block by default
   int ret = gSysFcntl(fd ,F_SETFL, flag);
-  if( 0 == ret && lp) {
+  if (0 == ret && lp) {
     lp->user_flag = current_flags;
   }
 
@@ -182,14 +192,14 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
 }
 
 int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysConnect(fd,address,address_len);
 	}
 
 	//1.sys call
 	int ret = gSysConnect(fd,address,address_len);
 
-	rpchook_t *lp = get_by_fd(fd);
+	rpchook_t *lp = getByFd(fd);
 	if(!lp) {
     return ret;
   }
@@ -217,7 +227,7 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 		pf.fd = fd;
 		pf.events = (POLLOUT | POLLERR | POLLHUP);
 
-		pollret = poll(&pf,1,25000);
+		pollret = poll(&pf ,1, 25000);
 
 		if(1 == pollret) {
 			break;
@@ -241,20 +251,20 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 }
 
 int close(int fd) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysClose(fd);
 	}
 
-	free_by_fd(fd);
+	freeByFd(fd);
 	return gSysClose(fd);
 }
 
 ssize_t read(int fd, void *buf, size_t nbyte) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysRead(fd,buf,nbyte);
 	}
 
-	rpchook_t *lp = get_by_fd(fd);
+	rpchook_t *lp = getByFd(fd);
 
 	if(!lp) {
 		return gSysRead(fd,buf,nbyte);
@@ -273,11 +283,14 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
     }
 
     // at here means ret < 0
+    if (n > 0) {
+      return n;
+    }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       struct pollfd pf = { 0 };
       pf.fd = fd;
       pf.events = (POLLIN | POLLERR | POLLHUP);
-      int timeout = ( lp->read_timeout.tv_sec * 1000 ) 
+      int timeout = (lp->read_timeout.tv_sec * 1000 ) 
         + ( lp->read_timeout.tv_usec / 1000 );
 
       poll(&pf,1,timeout);
@@ -288,11 +301,11 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
 }
 
 ssize_t write(int fd, const void *buf, size_t nbyte) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysWrite(fd,buf,nbyte);
 	}
 
-	rpchook_t *lp = get_by_fd(fd);
+	rpchook_t *lp = getByFd(fd);
 
 	if(!lp) {
 		return gSysWrite(fd,buf,nbyte);
@@ -326,11 +339,11 @@ ssize_t write(int fd, const void *buf, size_t nbyte) {
 }
 
 ssize_t send(int socket, const void *buffer, size_t length, int flags) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysSend(socket,buffer,length,flags);
 	}
 
-	rpchook_t *lp = get_by_fd(socket);
+	rpchook_t *lp = getByFd(socket);
 
 	if( !lp) {
 		return gSysSend(socket,buffer,length,flags);
@@ -364,10 +377,10 @@ ssize_t send(int socket, const void *buffer, size_t length, int flags) {
 }
 
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysRecv(socket,buffer,length,flags);
 	}
-	rpchook_t *lp = get_by_fd(socket);
+	rpchook_t *lp = getByFd(socket);
 
 	if(!lp) {
 		return gSysRecv( socket,buffer,length,flags );
@@ -386,6 +399,9 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     }
 
     // at here means ret < 0
+    if (n > 0) {
+      return n;
+    }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       struct pollfd pf = { 0 };
       pf.fd = socket;
@@ -401,7 +417,7 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
 }
 
 int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysPoll(fds,nfds,timeout);
 	}
 
@@ -410,11 +426,11 @@ int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
 
 int setsockopt(int fd, int level, int option_name,
 			                 const void *option_value, socklen_t option_len) {
-	if(!is_enable_sys_hook()) {
+	if(!isEnableSysHook()) {
 		return gSysSetsockopt(fd,level,option_name,option_value,option_len);
 	}
 
-	rpchook_t *lp = get_by_fd(fd);
+	rpchook_t *lp = getByFd(fd);
 
 	if(lp && SOL_SOCKET == level) {
 		struct timeval *val = (struct timeval*)option_value;
@@ -436,7 +452,7 @@ int fcntl(int fildes, int cmd, ...) {
 	va_start(arg_list,cmd);
 
 	int ret = -1;
-	rpchook_t *lp = get_by_fd(fildes);
+	rpchook_t *lp = getByFd(fildes);
 	switch(cmd) {
 		case F_DUPFD: {
 			int param = va_arg(arg_list,int);
@@ -460,7 +476,7 @@ int fcntl(int fildes, int cmd, ...) {
 			int param = va_arg(arg_list,int);
 			int flag = param;
       // set as non block by default
-			if(is_enable_sys_hook() && lp) {
+			if(isEnableSysHook() && lp) {
 				flag |= O_NONBLOCK;
 			}
 			ret = gSysFcntl(fildes,cmd,flag);

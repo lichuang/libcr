@@ -4,6 +4,7 @@
 #include <poll.h>
 #include "typedef.h"
 #include "coroutine.h"
+#include "coroutine_task.h"
 #include "context.h"
 #include "epoll.h"
 
@@ -16,6 +17,8 @@ struct env_t {
   int callstacksize;
   coroutine_t *main;
   epoll_context_t *epoll;
+
+  taskpool_t *pool;
 
   coroutine_t *occupy;
   coroutine_t *pending;
@@ -59,7 +62,12 @@ int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int ti
 epoll_context_t *get_epoll_context();
 
 env_t* get_curr_thread_env();
-void init_curr_thread_env();
+void do_init_curr_thread_env();
+
+coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg);
+void coroutine_resume(coroutine_t *co);
+
+void coroutine_yield_context();
 
 char is_enable_sys_hook();
 

@@ -16,8 +16,10 @@ static const int kMaxCallStack = 128;
 static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
 static const int kMaxTimeoutMs = 40 * 1000;
+static const int kDefaultIoTimeoutMs = 1000;
+static const int kDefaultTaskPerThread = 1000;
 
-static coroutine_options_t gOptions;
+coroutine_options_t gOptions;
 
 static env_t* gEnv[204800] = { NULL };
 
@@ -51,17 +53,23 @@ static coroutine_t* create_env(env_t *env, coroutine_fun_t func, void *arg) {
 
   stack_t *stack = alloc_stack(stack_size);
   co->stack = stack;
+  co->context.sp = stack->start;
+  co->context.size = stack_size;
+
+  co->save_size = 0;
+  co->save_buffer = NULL;
 
   return co;
 }
 
-void init_curr_thread_env() {
+env_t* init_curr_thread_env() {
   pid_t pid = 0;
   env_t *env = NULL;
 
   pid = get_pid();
   env = (env_t*)calloc(1, sizeof(env_t));
   env->callstack = (coroutine_t**)calloc(kMaxCallStack, sizeof(coroutine_t*));
+  env->callstacksize = 0;
   gEnv[pid] = env;
 
   coroutine_t *co = create_env(env, NULL, NULL);
@@ -70,16 +78,33 @@ void init_curr_thread_env() {
   context_init(&co->context);
   env->callstack[env->callstacksize++] = co;
   env->epoll = alloc_epoll(10240);
+
+  return env;
+}
+
+void do_init_curr_thread_env() {
+  env_t *env = init_curr_thread_env();
+  env->pool = create_thread_taskpool(env, gOptions.task_per_thread);
 }
 
 coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg) {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
-    init_curr_thread_env();
+    do_init_curr_thread_env();
     env = get_curr_thread_env();
   }
 
   return create_env(env, fun, arg);
+}
+
+void coroutine_new_task(coroutine_fun_t fun, void *arg) {
+  env_t *env = get_curr_thread_env();
+  if (env == NULL) {
+    do_init_curr_thread_env();
+    env = get_curr_thread_env();
+  }
+
+  new_task(env->pool, fun, arg);
 }
 
 void coroutine_free(coroutine_t *co) {
@@ -104,8 +129,7 @@ void coroutine_swap(coroutine_t* curr, coroutine_t* pending) {
 	coroutine_t* update_occupy =  curr_env->occupy;
 	coroutine_t* update_pending = curr_env->pending;
 	
-	if (update_occupy && update_pending && update_occupy != update_pending)
-	{
+	if (update_occupy && update_pending && update_occupy != update_pending) {
 		//resume stack buffer
 		if (update_pending->save_buffer && update_pending->save_size > 0) {
 			memcpy(update_pending->stack_sp, update_pending->save_buffer, update_pending->save_size);
@@ -130,7 +154,10 @@ static void* coroutine_main(void *arg, void *s1) {
   }
   co->state = STOPPED;
 
-  yield_env(co->env);
+  env_t *env = co->env;
+  //coroutine_free(co);
+
+  yield_env(env);
 
   return NULL;
 }
@@ -149,6 +176,10 @@ void coroutine_resume(coroutine_t *co) {
 
 void coroutine_yield(coroutine_t *co) {
   yield_env(co->env);
+}
+
+void coroutine_yield_context() {
+  yield_env(get_curr_thread_env());
 }
 
 static coroutine_t *curr_coroutine(env_t *env) {
@@ -276,7 +307,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 		struct epoll_event *ev = &(arg.items[i].event);
 
 		if(fds[i].fd > -1) {
-			ev->data.ptr = arg.items + i;
+			ev->data.ptr = &(arg.items[i].time);
 			ev->events = PollEvent2Epoll(fds[i].events);
 
 			int ret = do_epoll_ctl(epfd,EPOLL_CTL_ADD, fds[i].fd, ev);
@@ -311,8 +342,8 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	yield_env(get_curr_thread_env());
 
 	removeFromLink(&arg.time);
-	for(nfds_t i = 0;i < nfds;i++)
-	{
+
+	for(nfds_t i = 0;i < nfds;i++) {
 		int fd = fds[i].fd;
 		if(fd > -1) {
 			do_epoll_ctl(epfd,EPOLL_CTL_DEL,fd,&arg.items[i].event);
@@ -334,7 +365,7 @@ epoll_context_t *get_epoll_context() {
   env_t *env = get_curr_thread_env();
 
   if (env == NULL) {
-    init_curr_thread_env();
+    do_init_curr_thread_env();
     env = get_curr_thread_env();
   }
 
@@ -343,10 +374,6 @@ epoll_context_t *get_epoll_context() {
 
 int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms) {
 	return poll_inner(ctx, fds, nfds, timeout_ms, NULL);
-}
-
-char is_enable_sys_hook() {
-  return gOptions.enable_sys_hook;
 }
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
@@ -368,4 +395,12 @@ void coroutine_init_env(const coroutine_options_t *options) {
     stack_size += 0x1000;
   }
   gOptions.stack_size = stack_size;
+
+  if (gOptions.max_io_timeout_ms == 0) {
+    gOptions.max_io_timeout_ms = kDefaultIoTimeoutMs;
+  }
+
+  if (gOptions.task_per_thread == 0) {
+    gOptions.task_per_thread = kDefaultTaskPerThread;
+  }
 }
