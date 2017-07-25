@@ -17,6 +17,8 @@ static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
 static const int kMaxTimeoutMs = 40 * 1000;
 
+static coroutine_options_t gOptions;
+
 static env_t* gEnv[204800] = { NULL };
 
 static inline pid_t get_pid() {
@@ -37,19 +39,8 @@ static inline stack_t* alloc_stack(int size) {
   return stack;
 }
 
-static coroutine_t* create_env(env_t *env, coroutine_attr_t *attr, coroutine_fun_t func, void *arg) {
-  int stack_size = attr ? attr->stack_size : kMinStackSize;
-
-  if (stack_size < kMinStackSize) {
-    stack_size = kMinStackSize;
-  } else if (stack_size > kMaxStackSize) {
-    stack_size = kMaxStackSize;
-  }
-
-  if (stack_size & 0XFFF) {
-    stack_size &= ~0XFFF;
-    stack_size += 0x1000;
-  }
+static coroutine_t* create_env(env_t *env, coroutine_fun_t func, void *arg) {
+  int stack_size = gOptions.stack_size;
 
   coroutine_t *co = (coroutine_t*)malloc(sizeof(coroutine_t));
   memset(co, 0, sizeof(coroutine_t));
@@ -73,7 +64,7 @@ void init_curr_thread_env() {
   env->callstack = (coroutine_t**)calloc(kMaxCallStack, sizeof(coroutine_t*));
   gEnv[pid] = env;
 
-  coroutine_t *co = create_env(env, NULL, NULL, NULL);
+  coroutine_t *co = create_env(env, NULL, NULL);
   co->main = 1;
 
   context_init(&co->context);
@@ -81,16 +72,14 @@ void init_curr_thread_env() {
   env->epoll = alloc_epoll(10240);
 }
 
-coroutine_t* coroutine_new(coroutine_attr_t *attr, coroutine_fun_t fun, void *arg) {
+coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg) {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
     init_curr_thread_env();
     env = get_curr_thread_env();
   }
 
-  coroutine_t *co = create_env(env, attr, fun, arg);
-
-  return co;
+  return create_env(env, fun, arg);
 }
 
 void coroutine_free(coroutine_t *co) {
@@ -133,7 +122,7 @@ static void yield_env(env_t *env) {
   coroutine_swap(curr, last);
 }
 
-static int coroutine_main(void *arg, void *s1) {
+static void* coroutine_main(void *arg, void *s1) {
   (void)s1;
   coroutine_t *co = (coroutine_t*)arg;
   if (co->fun) {
@@ -143,7 +132,7 @@ static int coroutine_main(void *arg, void *s1) {
 
   yield_env(co->env);
 
-  return 0;
+  return NULL;
 }
 
 void coroutine_resume(coroutine_t *co) {
@@ -341,13 +330,42 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	return raise_cnt;
 }
 
+epoll_context_t *get_epoll_context() {
+  env_t *env = get_curr_thread_env();
+
+  if (env == NULL) {
+    init_curr_thread_env();
+    env = get_curr_thread_env();
+  }
+
+  return env->epoll;
+}
+
 int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms) {
 	return poll_inner(ctx, fds, nfds, timeout_ms, NULL);
+}
+
+char is_enable_sys_hook() {
+  return gOptions.enable_sys_hook;
 }
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 extern void once_init();
 
-void coroutine_init_env() {
+void coroutine_init_env(const coroutine_options_t *options) {
   pthread_once(&once, once_init);
+  memcpy(&gOptions, options, sizeof(coroutine_options_t));
+  int stack_size = gOptions.stack_size;
+
+  if (stack_size < kMinStackSize) {
+    stack_size = kMinStackSize;
+  } else if (stack_size > kMaxStackSize) {
+    stack_size = kMaxStackSize;
+  }
+
+  if (stack_size & 0XFFF) {
+    stack_size &= ~0XFFF;
+    stack_size += 0x1000;
+  }
+  gOptions.stack_size = stack_size;
 }

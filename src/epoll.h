@@ -62,6 +62,4 @@ void addTail(timer_list_t *list, timer_item_t *item);
 
 int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev);
 
-void eventloop();
-
 #endif  // __EPOLL_H__

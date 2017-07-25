@@ -18,7 +18,7 @@ struct context_t {
   char *sp;
 };
 
-typedef int (*context_fun_t)(void*, void*);
+typedef void* (*context_fun_t)( void* s, void* s2 );
 
 int context_init(context_t *context);
 int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s1);

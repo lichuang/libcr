@@ -8,6 +8,7 @@ LIB=libcr.a
 
 EXTENSION=c
 OBJS=$(patsubst $(SRC_DIR)/%.$(EXTENSION), $(OBJ_DIR)/%.o,$(wildcard $(SRC_DIR)/*.$(EXTENSION)))
+OBJS+=$(OBJ_DIR)/context_swap.o
 DEPS=$(patsubst $(OBJ_DIR)/%.o, $(DEPS_DIR)/%.d, $(OBJS))
 
 INCLUDE= 
@@ -17,17 +18,20 @@ AR= ar rcu
 #CFLAGS=-std=c99 -Wall -Werror -g 
 CFLAGS=-std=c99 -Wall -g 
 #LDFLAGS= -L ./lib -lcr -pthread
-LDFLAGS= -L ./lib -lcr -ldl
+LDFLAGS= -L ./lib -lcr -ldl -lpthread
 
 all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
-	#$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
+	$(CC) example/echoserver.c -I./src $(CFLAGS) $(INCLUDE) -o example/echoserver $(LDFLAGS)
 
 ex:$(LIB_DIR)/$(LIB) example/*.cc
-	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS)
+	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS) 
 
 test:$(LIB_DIR)/$(LIB)
 	$(CC) test/main.c -I./src $(CFLAGS) $(INCLUDE) -o test/test $(LDFLAGS)
+
+$(OBJ_DIR)/context_swap.o:$(SRC_DIR)/context_swap.S
+	$(CC) $< -o $@ -c $(CFLAGS) $(INCLUDE) 
 
 $(OBJ_DIR)/%.o:$(SRC_DIR)/%.$(EXTENSION) 
 	$(CC) $< -o $@ -c $(CFLAGS) $(INCLUDE) 

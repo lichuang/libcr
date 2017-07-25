@@ -197,7 +197,7 @@ void removeFromLink(timer_item_t *item) {
   item->parent = NULL;
 }
 
-void eventloop() {
+void coroutine_eventloop() {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
     init_curr_thread_env();

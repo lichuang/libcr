@@ -400,6 +400,106 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
   return n;
 }
 
+int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
+	if(!is_enable_sys_hook()) {
+		return gSysPoll(fds,nfds,timeout);
+	}
+
+	return poll_inner(get_epoll_context(),fds,nfds,timeout, gSysPoll);
+}
+
+int setsockopt(int fd, int level, int option_name,
+			                 const void *option_value, socklen_t option_len) {
+	if(!is_enable_sys_hook()) {
+		return gSysSetsockopt(fd,level,option_name,option_value,option_len);
+	}
+
+	rpchook_t *lp = get_by_fd(fd);
+
+	if(lp && SOL_SOCKET == level) {
+		struct timeval *val = (struct timeval*)option_value;
+		if(SO_RCVTIMEO == option_name) {
+			memcpy(&lp->read_timeout,val,sizeof(*val));
+		} else if( SO_SNDTIMEO == option_name ) {
+			memcpy(&lp->write_timeout,val,sizeof(*val));
+		}
+	}
+	return gSysSetsockopt(fd,level,option_name,option_value,option_len);
+}
+
+int fcntl(int fildes, int cmd, ...) {
+	if(fildes < 0) {
+		return -1;
+	}
+
+	va_list arg_list;
+	va_start(arg_list,cmd);
+
+	int ret = -1;
+	rpchook_t *lp = get_by_fd(fildes);
+	switch(cmd) {
+		case F_DUPFD: {
+			int param = va_arg(arg_list,int);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+		case F_GETFD: {
+			ret = gSysFcntl(fildes,cmd);
+			break;
+		}
+		case F_SETFD: {
+			int param = va_arg(arg_list,int);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+		case F_GETFL: {
+			ret = gSysFcntl(fildes,cmd);
+			break;
+		}
+		case F_SETFL: {
+			int param = va_arg(arg_list,int);
+			int flag = param;
+      // set as non block by default
+			if(is_enable_sys_hook() && lp) {
+				flag |= O_NONBLOCK;
+			}
+			ret = gSysFcntl(fildes,cmd,flag);
+			if(0 == ret && lp) {
+				lp->user_flag = param;
+			}
+			break;
+		}
+		case F_GETOWN: {
+			ret = gSysFcntl(fildes,cmd);
+			break;
+		}
+		case F_SETOWN: {
+			int param = va_arg(arg_list,int);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+		case F_GETLK: {
+			struct flock *param = va_arg(arg_list,struct flock *);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+		case F_SETLK: {
+			struct flock *param = va_arg(arg_list,struct flock *);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+		case F_SETLKW: {
+			struct flock *param = va_arg(arg_list,struct flock *);
+			ret = gSysFcntl(fildes,cmd,param);
+			break;
+		}
+	}
+
+	va_end(arg_list);
+
+	return ret;
+}
+
 void once_init() {
   gSysSocket   = (socket_pfn_t)dlsym(RTLD_NEXT,"socket");
   gSysAccept   = (accept_pfn_t)dlsym(RTLD_NEXT,"accept");

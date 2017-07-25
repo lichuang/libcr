@@ -61,8 +61,8 @@ epoll_context_t *get_epoll_context();
 env_t* get_curr_thread_env();
 void init_curr_thread_env();
 
-void enable_sys_hook();
 char is_enable_sys_hook();
+
 #ifdef __cplusplus
 }
 #endif

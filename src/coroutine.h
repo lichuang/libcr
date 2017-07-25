@@ -4,20 +4,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef void* (*coroutine_fun_t)(void *);
+
 struct coroutine_t;
 typedef struct coroutine_t coroutine_t;
 
-typedef int (*coroutine_fun_t)(void *);
-
-typedef struct coroutine_attr_t {
+typedef struct coroutine_options_t {
   int stack_size;
-} coroutine_attr_t;
 
-void coroutine_init_env();
-coroutine_t* coroutine_new(coroutine_attr_t *, coroutine_fun_t fun, void *arg);
-void coroutine_resume(coroutine_t *);
-void coroutine_yield(coroutine_t *);
-void coroutine_free(coroutine_t *);
+  char enable_sys_hook;
+} coroutine_options_t;
+
+void coroutine_init_env(const coroutine_options_t *options);
+coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg);
+void coroutine_resume(coroutine_t *co);
+void coroutine_eventloop();
 
 #ifdef __cplusplus
 }
