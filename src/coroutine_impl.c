@@ -407,6 +407,8 @@ extern void once_init();
 
 void coroutine_init_env(const coroutine_options_t *options) {
   pthread_once(&once, once_init);
+  coroutine_pthread_key_init();
+
   memcpy(&gOptions, options, sizeof(coroutine_options_t));
   int stack_size = gOptions.stack_size;
 
