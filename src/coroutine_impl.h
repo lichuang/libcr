@@ -37,6 +37,10 @@ typedef enum state_t {
   STOPPED
 } state_t;
 
+struct coroutine_specific_t {
+  void *value;
+};
+
 struct coroutine_t {
   coroutine_fun_t fun;
   env_t *env;
@@ -53,6 +57,8 @@ struct coroutine_t {
   char *save_buffer;
 
   stack_t *stack;
+
+  coroutine_specific_t spec[1024];
 };
 
 typedef int (*poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);

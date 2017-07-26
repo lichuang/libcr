@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/syscall.h>
+#include <sys/select.h>
 #include <sys/un.h>
 
 #include <dlfcn.h>
@@ -25,73 +26,78 @@
 
 #include <time.h>
 #include "coroutine_impl.h"
+#include "coroutine_specific.h"
 
 extern coroutine_options_t gOptions;
 
-typedef int (*socket_pfn_t)(int domain, int type, int protocol);
-typedef int (*accept_pfn_t)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-typedef int (*connect_pfn_t)(int socket, const struct sockaddr *address, socklen_t address_len);
-typedef int (*close_pfn_t)(int fd);
+typedef int (*socket_fun_t)(int domain, int type, int protocol);
+typedef int (*accept_fun_t)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+typedef int (*connect_fun_t)(int socket, const struct sockaddr *address, socklen_t address_len);
+typedef int (*close_fun_t)(int fd);
 
-typedef ssize_t (*read_pfn_t)(int fildes, void *buf, size_t nbyte);
-typedef ssize_t (*write_pfn_t)(int fildes, const void *buf, size_t nbyte);
+typedef int (*select_fun_t)(int nfds, fd_set *readfds, fd_set *writefds,
+                           fd_set *exceptfds, struct timeval *timeout);
 
-typedef ssize_t (*sendto_pfn_t)(int socket, const void *message, size_t length,
+typedef ssize_t (*read_fun_t)(int fildes, void *buf, size_t nbyte);
+typedef ssize_t (*write_fun_t)(int fildes, const void *buf, size_t nbyte);
+
+typedef ssize_t (*sendto_fun_t)(int socket, const void *message, size_t length,
                      int flags, const struct sockaddr *dest_addr,
                                               socklen_t dest_len);
 
-typedef ssize_t (*recvfrom_pfn_t)(int socket, void *buffer, size_t length,
+typedef ssize_t (*recvfrom_fun_t)(int socket, void *buffer, size_t length,
                      int flags, struct sockaddr *address,
                                               socklen_t *address_len);
 
-typedef size_t (*send_pfn_t)(int socket, const void *buffer, size_t length, int flags);
-typedef ssize_t (*recv_pfn_t)(int socket, void *buffer, size_t length, int flags);
+typedef size_t (*send_fun_t)(int socket, const void *buffer, size_t length, int flags);
+typedef ssize_t (*recv_fun_t)(int socket, void *buffer, size_t length, int flags);
 
-typedef int (*poll_pfn_t)(struct pollfd fds[], nfds_t nfds, int timeout);
-typedef int (*setsockopt_pfn_t)(int socket, int level, int option_name,
+typedef int (*poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);
+typedef int (*setsockopt_fun_t)(int socket, int level, int option_name,
                          const void *option_value, socklen_t option_len);
 
-typedef int (*fcntl_pfn_t)(int fildes, int cmd, ...);
-typedef struct tm *(*localtime_r_pfn_t)( const time_t *timep, struct tm *result );
+typedef unsigned int (*sleep_fun_t)(unsigned int seconds);
+typedef int (*usleep_fun_t)(useconds_t usec);
+typedef int (*nanosleep_fun_t)(const struct timespec *req, struct timespec *rem);
 
-typedef void *(*pthread_getspecific_pfn_t)(pthread_key_t key);
-typedef int (*pthread_setspecific_pfn_t)(pthread_key_t key, const void *value);
+typedef int (*fcntl_fun_t)(int fildes, int cmd, ...);
+typedef struct tm *(*localtime_r_fun_t)( const time_t *timep, struct tm *result );
 
-typedef int (*setenv_pfn_t)(const char *name, const char *value, int overwrite);
-typedef int (*unsetenv_pfn_t)(const char *name);
-typedef char *(*getenv_pfn_t)(const char *name);
-typedef struct hostent* (*gethostbyname_pfn_t)(const char *name);
-//typedef res_state (*__res_state_pfn_t)();
-typedef int (*__poll_pfn_t)(struct pollfd fds[], nfds_t nfds, int timeout);
+typedef void *(*pthread_getspecific_fun_t)(pthread_key_t key);
+typedef int (*pthread_setspecific_fun_t)(pthread_key_t key, const void *value);
+
+typedef int (*setenv_fun_t)(const char *name, const char *value, int overwrite);
+typedef int (*unsetenv_fun_t)(const char *name);
+typedef char *(*getenv_fun_t)(const char *name);
+typedef struct hostent* (*gethostbyname_fun_t)(const char *name);
+//typedef res_state (*__res_state_fun_t)();
+typedef int (*__poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);
 
 // hook system functions
-static socket_pfn_t gSysSocket;
-static accept_pfn_t gSysAccept;
-static connect_pfn_t gSysConnect;
-static close_pfn_t gSysClose;
+static socket_fun_t gSysSocket;
+static accept_fun_t gSysAccept;
+static connect_fun_t gSysConnect;
+static close_fun_t gSysClose;
+static select_fun_t gSysSelect;
 
-static read_pfn_t gSysRead;
-static write_pfn_t gSysWrite;
+static read_fun_t gSysRead;
+static write_fun_t gSysWrite;
 
-static sendto_pfn_t sSysSendto;
-static recvfrom_pfn_t gSysRecvFrom;
+static sendto_fun_t sSysSendto;
+static recvfrom_fun_t gSysRecvFrom;
 
-static send_pfn_t gSysSend;
-static recv_pfn_t gSysRecv;
+static send_fun_t gSysSend;
+static recv_fun_t gSysRecv;
 
-static poll_pfn_t gSysPoll;
+static poll_fun_t gSysPoll;
+static sleep_fun_t gSysSleep;
+static usleep_fun_t gSysUsleep;
+static nanosleep_fun_t gSysNanosleep;
 
-static setsockopt_pfn_t gSysSetsockopt;
-static fcntl_pfn_t gSysFcntl;
+static setsockopt_fun_t gSysSetsockopt;
+static fcntl_fun_t gSysFcntl;
 
-static setenv_pfn_t g_sys_setenv_func;
-static unsetenv_pfn_t g_sys_unsetenv_func;
-static getenv_pfn_t g_sys_getenv_func;
-//static __res_state_pfn_t g_sys___res_state_func  = (__res_state_pfn_t)dlsym(RTLD_NEXT,"__res_state");
-
-static gethostbyname_pfn_t g_sys_gethostbyname_func;
-
-static __poll_pfn_t g_sys___poll_func;
+static gethostbyname_fun_t gSysgethostbyname;
 
 typedef struct rpchook_t {
 	int user_flag;
@@ -158,7 +164,106 @@ int socket(int domain, int type, int protocol) {
 	return fd;
 }
 
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+          fd_set *exceptfds, struct timeval *timeout) {
+	if(!isEnableSysHook()) {
+	  return gSysSelect(nfds, readfds, writefds, exceptfds, timeout);
+	}
+
+  int timeout_ms = -1;
+  if (timeout) {
+    timeout_ms = timeout->tv_sec * 1000 + timeout->tv_usec / 1000;
+  }
+
+  if (timeout == 0) {
+	  return gSysSelect(nfds, readfds, writefds, exceptfds, timeout);
+  }
+
+  fd_set rfs, wfs, efs;
+  FD_ZERO(&rfs);
+  FD_ZERO(&wfs);
+  FD_ZERO(&efs);
+  if (readfds) rfs = *readfds;
+  if (writefds) wfs = *writefds;
+  if (exceptfds) efs = *exceptfds;
+  struct timeval zero_tv = {0, 0};
+  int n = gSysSelect(nfds, (readfds ? &rfs : NULL),
+    (writefds ? &wfs : NULL),
+    (exceptfds ? &efs : NULL), &zero_tv);
+  if (n != 0) {
+    if (readfds) *readfds = rfs;
+    if (writefds) *writefds = wfs;
+    if (exceptfds) *exceptfds = efs;
+    return n;
+  }
+
+  // convert select to poll
+  // first compute total fd num
+  fd_set* fds[3] = {readfds, writefds, exceptfds};
+  int total = 0;
+  for (int i = 0; i < 3; ++i) {
+    fd_set *set = fds[i];
+    if (!set) {
+      continue;
+    }
+    for (int fd = 0; fd < nfds; ++fd) {
+      if (FD_ISSET(fd, set)) {
+        total++;
+      }
+    }
+  }
+
+  // allocate poll array
+  struct pollfd *poll_fds = (struct pollfd*)malloc(total * sizeof(struct pollfd));
+  uint32_t poll_events[3] = {POLLIN, POLLOUT, 0};
+  for (int i = 0; i < 3; ++i) {
+    fd_set *set = fds[i];
+    if (!set) {
+      continue;
+    }
+    for (int fd = 0; fd < nfds; ++fd) {
+      if (FD_ISSET(fd, set)) {
+        poll_fds[i].fd = fd;
+        poll_fds[i].events = poll_events[i];
+      }
+    }
+  }
+
+  // OK, do the poll work
+  n = poll(poll_fds, total, timeout_ms);
+  if (n <= 0) {
+    goto out;
+  }
+
+  // convert pollfd to fd_set
+  n = 0;
+  for (int i = 0; i < total; ++i) {
+    struct pollfd *pfd = &poll_fds[i];
+    if ((pfd->events & POLLIN) && readfds) {
+      FD_SET(pfd->fd, readfds);
+      ++n;
+    }
+
+    if ((pfd->events & POLLOUT) && writefds) {
+      FD_SET(pfd->fd, writefds);
+      ++n;
+    }
+
+    if ((pfd->events & ~(POLLIN | POLLOUT)) && exceptfds) {
+      FD_SET(pfd->fd, exceptfds);
+      ++n;
+    }
+  }
+
+out:  
+  free(poll_fds);
+  return n;
+}
+
 int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
+	if(!isEnableSysHook()) {
+	  return gSysAccept(listen_fd,addr,len);
+	}
 	int fd = gSysAccept(listen_fd,addr,len);
 
   do {
@@ -222,12 +327,12 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 	int pollret = 0;
 	struct pollfd pf = { 0 };
 
-	for(int i=0;i<3;i++) { //25s * 3 = 75s 
+	for(int i=0;i<3;i++) {
 		memset( &pf,0,sizeof(pf) );
 		pf.fd = fd;
 		pf.events = (POLLOUT | POLLERR | POLLHUP);
 
-		pollret = poll(&pf ,1, 25000);
+		pollret = poll(&pf ,1, getMaxIoTimeoutMs());
 
 		if(1 == pollret) {
 			break;
@@ -424,6 +529,42 @@ int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
 	return poll_inner(get_epoll_context(),fds,nfds,timeout, gSysPoll);
 }
 
+static void doSleep(unsigned long long timeout_ms) {
+  struct pollfd fds[1];
+
+  poll_inner(get_epoll_context(), fds, 0, timeout_ms, NULL);
+}
+
+unsigned int sleep(unsigned int seconds) {
+	if(!isEnableSysHook()) {
+		return gSysSleep(seconds);
+	}
+
+  doSleep(seconds * 1000);
+  return 0;
+}
+
+int usleep(useconds_t usec) {
+	if(!isEnableSysHook()) {
+		return gSysUsleep(usec);
+	}
+
+  doSleep(usec / 1000);
+
+  return 0;
+}
+
+int nanosleep(const struct timespec *req, struct timespec *rem) {
+	if(!isEnableSysHook()) {
+		return gSysNanosleep(req, rem);
+	}
+  int timeout_ms = req->tv_sec * 1000 + req->tv_nsec / 1000000;
+
+  doSleep(timeout_ms);
+
+  return 0;
+}
+
 int setsockopt(int fd, int level, int option_name,
 			                 const void *option_value, socklen_t option_len) {
 	if(!isEnableSysHook()) {
@@ -516,32 +657,88 @@ int fcntl(int fildes, int cmd, ...) {
 	return ret;
 }
 
+typedef struct hostbuf_wrap {
+	struct hostent host;
+	char* buffer;
+	size_t buffer_size;
+	int host_errno;
+} hostbuf_wrap;
+
+struct hostent *coroutine_gethostbyname(const char *name) {
+	if (!name) {
+		return NULL;
+	}
+
+  hostbuf_wrap *__co_hostbuf_wrap = (hostbuf_wrap*)coroutine_getspecific(gCoroutineHostbufKey);
+  if (__co_hostbuf_wrap == NULL) {
+    __co_hostbuf_wrap = (hostbuf_wrap*)calloc(1, sizeof(hostbuf_wrap));
+    int ret = coroutine_setspecific(gCoroutineHostbufKey, __co_hostbuf_wrap);
+    if (ret != 0) {
+      free(__co_hostbuf_wrap);
+      __co_hostbuf_wrap = NULL;
+    }
+  }
+
+	if (__co_hostbuf_wrap->buffer && __co_hostbuf_wrap->buffer_size > 1024) {
+		free(__co_hostbuf_wrap->buffer);
+		__co_hostbuf_wrap->buffer = NULL;
+	}
+	if (!__co_hostbuf_wrap->buffer) {
+		__co_hostbuf_wrap->buffer = (char*)malloc(1024);
+		__co_hostbuf_wrap->buffer_size = 1024;
+	}
+
+	struct hostent *host = &__co_hostbuf_wrap->host;
+	struct hostent *result = NULL;
+	int *h_errnop = &(__co_hostbuf_wrap->host_errno);
+
+	int ret = -1;
+	while ((ret = gethostbyname_r(name, host, __co_hostbuf_wrap->buffer, 
+				__co_hostbuf_wrap->buffer_size, &result, h_errnop)) == ERANGE && 
+				(*h_errnop == NETDB_INTERNAL)) {
+		free(__co_hostbuf_wrap->buffer);
+		__co_hostbuf_wrap->buffer_size = __co_hostbuf_wrap->buffer_size * 2;
+		__co_hostbuf_wrap->buffer = (char*)malloc(__co_hostbuf_wrap->buffer_size);
+	}
+
+	if (ret == 0 && (host == result)) {
+		return host;
+	}
+	return NULL;
+}
+
+struct hostent *gethostbyname(const char *name) {
+  if (!isEnableSysHook()) {
+    return gSysgethostbyname(name);
+  }
+  return coroutine_gethostbyname(name);
+}
+
 void once_init() {
-  gSysSocket   = (socket_pfn_t)dlsym(RTLD_NEXT,"socket");
-  gSysAccept   = (accept_pfn_t)dlsym(RTLD_NEXT,"accept");
-  gSysConnect = (connect_pfn_t)dlsym(RTLD_NEXT,"connect");
-  gSysClose   = (close_pfn_t)dlsym(RTLD_NEXT,"close");
+  gSysSocket   = (socket_fun_t)dlsym(RTLD_NEXT,"socket");
+  gSysAccept   = (accept_fun_t)dlsym(RTLD_NEXT,"accept");
+  gSysConnect = (connect_fun_t)dlsym(RTLD_NEXT,"connect");
+  gSysClose   = (close_fun_t)dlsym(RTLD_NEXT,"close");
 
-  gSysRead     = (read_pfn_t)dlsym(RTLD_NEXT,"read");
-  gSysWrite   = (write_pfn_t)dlsym(RTLD_NEXT,"write");
+  gSysSelect     = (select_fun_t)dlsym(RTLD_NEXT,"select");
 
-  sSysSendto   = (sendto_pfn_t)dlsym(RTLD_NEXT,"sendto");
-  gSysRecvFrom = (recvfrom_pfn_t)dlsym(RTLD_NEXT,"recvfrom");
+  gSysSleep     = (sleep_fun_t)dlsym(RTLD_NEXT,"sleep");
+  gSysUsleep     = (usleep_fun_t)dlsym(RTLD_NEXT,"usleep");
+  gSysNanosleep     = (nanosleep_fun_t)dlsym(RTLD_NEXT,"nanosleep");
 
-  gSysSend     = (send_pfn_t)dlsym(RTLD_NEXT,"send");
-  gSysRecv     = (recv_pfn_t)dlsym(RTLD_NEXT,"recv");
+  gSysRead     = (read_fun_t)dlsym(RTLD_NEXT,"read");
+  gSysWrite   = (write_fun_t)dlsym(RTLD_NEXT,"write");
 
-  gSysPoll     = (poll_pfn_t)dlsym(RTLD_NEXT,"poll");
+  sSysSendto   = (sendto_fun_t)dlsym(RTLD_NEXT,"sendto");
+  gSysRecvFrom = (recvfrom_fun_t)dlsym(RTLD_NEXT,"recvfrom");
 
-  gSysSetsockopt = (setsockopt_pfn_t)dlsym(RTLD_NEXT,"setsockopt");
-  gSysFcntl   = (fcntl_pfn_t)dlsym(RTLD_NEXT,"fcntl");
+  gSysSend     = (send_fun_t)dlsym(RTLD_NEXT,"send");
+  gSysRecv     = (recv_fun_t)dlsym(RTLD_NEXT,"recv");
 
-  g_sys_setenv_func   = (setenv_pfn_t)dlsym(RTLD_NEXT,"setenv");
-  g_sys_unsetenv_func = (unsetenv_pfn_t)dlsym(RTLD_NEXT,"unsetenv");
-  g_sys_getenv_func   =  (getenv_pfn_t)dlsym(RTLD_NEXT,"getenv");
-  //static __res_state_pfn_t g_sys___res_state_func  = (__res_state_pfn_t)dlsym(RTLD_NEXT,"__res_state");
+  gSysPoll     = (poll_fun_t)dlsym(RTLD_NEXT,"poll");
 
-  g_sys_gethostbyname_func = (gethostbyname_pfn_t)dlsym(RTLD_NEXT, "gethostbyname");
+  gSysSetsockopt = (setsockopt_fun_t)dlsym(RTLD_NEXT,"setsockopt");
+  gSysFcntl   = (fcntl_fun_t)dlsym(RTLD_NEXT,"fcntl");
 
-  g_sys___poll_func = (__poll_pfn_t)dlsym(RTLD_NEXT, "__poll");
+  gSysgethostbyname = (gethostbyname_fun_t)dlsym(RTLD_NEXT, "gethostbyname");
 }

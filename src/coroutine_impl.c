@@ -9,6 +9,7 @@
 #include "assert.h"
 #include "coroutine.h"
 #include "coroutine_impl.h"
+#include "coroutine_specific.h"
 #include "context.h"
 #include "misc.h"
 
@@ -370,6 +371,31 @@ epoll_context_t *get_epoll_context() {
   }
 
   return env->epoll;
+}
+
+coroutine_t *get_curr_thread_coroutine( ) {
+  env_t *env = get_curr_thread_env();
+  if(!env) {
+    return 0;
+  }
+  return get_curr_coroutine(env);
+}
+
+void *coroutine_getspecific(pthread_key_t key) {
+  coroutine_t *co = get_curr_thread_coroutine();
+  if(!co || co->main) {
+    return pthread_getspecific(key);
+  }
+  return co->spec[key].value;
+}
+
+int coroutine_setspecific(pthread_key_t key, const void *value) {
+  coroutine_t *co = get_curr_thread_coroutine();
+  if(!co || co->main) {
+    return pthread_setspecific(key,value);
+  }
+  co->spec[key].value = (void*)value;
+  return 0;
 }
 
 int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms) {

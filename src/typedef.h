@@ -37,6 +37,9 @@ typedef struct task_t task_t;
 struct taskpool_t;
 typedef struct taskpool_t taskpool_t;
 
+struct coroutine_specific_t;
+typedef struct coroutine_specific_t coroutine_specific_t;
+
 #ifdef __cplusplus
 }
 #endif
