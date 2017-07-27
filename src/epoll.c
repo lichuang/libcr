@@ -146,7 +146,7 @@ static inline void takeAllTimeout(epoll_timer_t *timer, unsigned long long now, 
   }
 
   timer->start = now;
-  timer->start_idx = cnt - 1;
+  timer->start_idx += cnt - 1;
 }
 
 void addTail(timer_list_t *list, timer_item_t *item) {

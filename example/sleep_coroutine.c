@@ -34,7 +34,7 @@ int main() {
 
   coroutine_init_env(&options);
   coroutine_new_task(fun1, NULL);
-  //coroutine_new_task(fun2, NULL);
+  coroutine_new_task(fun2, NULL);
   coroutine_eventloop();
 
   return 0;
