@@ -23,6 +23,7 @@ LDFLAGS= -L ./lib -lcr -ldl -lpthread
 all:$(OBJS)
 	$(AR) $(LIB_DIR)/$(LIB) $(OBJS)
 	$(CC) example/echoserver.c -I./src $(CFLAGS) $(INCLUDE) -o example/echoserver $(LDFLAGS)
+	$(CC) example/sleep_coroutine.c -I./src $(CFLAGS) $(INCLUDE) -o example/sleep_coroutine $(LDFLAGS)
 
 ex:$(LIB_DIR)/$(LIB) example/*.cc
 	$(CC) example/test.cc -I./src $(CFLAGS) $(INCLUDE) -o example/test $(LDFLAGS) 
