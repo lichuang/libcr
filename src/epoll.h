@@ -44,6 +44,8 @@ struct epoll_context_t {
   int fd;
   int size;
 
+  unsigned long long now;
+
   epoll_timer_t *timer;
   timer_list_t *timeout_list;
   timer_list_t *active_list;
@@ -56,10 +58,11 @@ int do_epoll_wait(int epfd, epoll_result_t *result,int maxevents,int timeout);
 int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev);
 int do_epoll_create(int size);
 
-int addTimeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now);
-void removeFromLink(timer_item_t *item);
-void addTail(timer_list_t *list, timer_item_t *item);
+int add_timeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now);
+void remove_from_link(timer_item_t *item);
+void add_tail(timer_list_t *list, timer_item_t *item);
 
 int do_epoll_ctl(int epfd,int op,int fd,struct epoll_event *ev);
+unsigned long long get_epoll_now(epoll_context_t *epoll);
 
 #endif  // __EPOLL_H__

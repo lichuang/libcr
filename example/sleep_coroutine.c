@@ -8,8 +8,7 @@
 #include <sys/socket.h>
 #include "coroutine.h"
 
-int count = 0;
-
+// this demo show that: in coroutine,call sleep function should not block the other coroutine in the same thread
 void *fun1(void *arg) {
   while (1) {
     printf("in fun1\n");
@@ -30,11 +29,20 @@ void *fun2(void *arg) {
 int main() {
   coroutine_options_t options;
   options.stack_size = 8 * 1024;
-  options.enable_sys_hook = 1;
 
   coroutine_init_env(&options);
-  coroutine_new_task(fun1, NULL);
-  coroutine_new_task(fun2, NULL);
+
+  coroutine_task_attr_t attr;
+  attr.enable_sys_hook = 1;
+  attr.max_timeout_ms = -1;
+  attr.arg = NULL;
+  attr.fun = fun1;
+  attr.timeout = NULL;
+
+  coroutine_new_task(&attr);
+
+  attr.fun = fun2;
+  coroutine_new_task(&attr);
   coroutine_eventloop();
 
   return 0;

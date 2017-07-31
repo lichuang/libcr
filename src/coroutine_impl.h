@@ -58,6 +58,8 @@ struct coroutine_t {
 
   stack_t *stack;
 
+  task_t *task;
+
   coroutine_specific_t spec[1024];
 };
 
@@ -74,8 +76,8 @@ coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg);
 void coroutine_resume(coroutine_t *co);
 
 void coroutine_yield_context();
-
-char is_enable_sys_hook();
+coroutine_t* coroutine_self();
+unsigned long long get_now();
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include "assert.h"
 #include "coroutine_impl.h"
 #include "coroutine_task.h"
 
@@ -19,6 +20,10 @@ static void *task_main(void *arg) {
     task->pool->working++;
     task->coroutine->fun(task->arg); 
 
+    if (task->timeout && task->attr.timeout) {
+      task->attr.timeout(task->coroutine->arg);
+    }
+
     // return to free list
     task->next = task->pool->free;
     task->pool->free = task;
@@ -33,7 +38,7 @@ static void *task_main(void *arg) {
   return NULL;
 }
 
-void new_task(taskpool_t *pool, coroutine_fun_t fun, void *arg) {
+void new_task(taskpool_t *pool, coroutine_task_attr_t *attr) {
   if (pool->working == pool->size) {
     // TODO
   }
@@ -46,9 +51,13 @@ void new_task(taskpool_t *pool, coroutine_fun_t fun, void *arg) {
   pool->free = task->next;
   task->next = NULL;
 
-  task->arg = arg;
-  task->coroutine->fun = fun;
+  task->arg = attr->arg;
+  task->coroutine->fun = attr->fun;
   task->state = TASK_RUNNING;
+  task->leftmsec = attr->max_timeout_ms;
+  task->timeout = 0;
+  task->last = get_now();
+  memcpy(&task->attr, attr, sizeof(coroutine_task_attr_t));
   coroutine_resume(task->coroutine);
 }
 
@@ -63,6 +72,7 @@ taskpool_t* create_thread_taskpool(env_t *env, int size) {
     pool->tasks[i] = task;
     task->pool = pool;
     coroutine_t *co = coroutine_new(task_main, task);
+    co->task = task;
     task->coroutine = co;
     task->next = pool->free;
     task->state = TASK_WAITING;

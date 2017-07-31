@@ -98,14 +98,14 @@ coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg) {
   return create_env(env, fun, arg);
 }
 
-void coroutine_new_task(coroutine_fun_t fun, void *arg) {
+void coroutine_new_task(coroutine_task_attr_t *attr) {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
     do_init_curr_thread_env();
     env = get_curr_thread_env();
   }
 
-  new_task(env->pool, fun, arg);
+  new_task(env->pool, attr);
 }
 
 void coroutine_free(coroutine_t *co) {
@@ -266,17 +266,61 @@ static void preparePollEvent(timer_item_t *item,struct epoll_event *ev,timer_lis
 
 	if (!poll->allEventDetatch) {
 		poll->allEventDetatch = 1;
-		removeFromLink(&poll->time);
-		addTail(active, &poll->time);
+		remove_from_link(&poll->time);
+		add_tail(active, &poll->time);
 	}
 }
 
+unsigned long long get_now() {
+  env_t *env = get_curr_thread_env();
+  return get_epoll_now(env->epoll);
+}
+
+// return:
+//  > 0: timeout ms
+//  < 0: no timeout limit
+//  = 0: already timeout
+static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
+  task_t *task = co->task;
+  // attr no timeout limit
+  if (task->attr.max_timeout_ms == -1) {
+    return timeout;
+  }
+  if (task->timeout) {
+    // already timeout
+    return 0;
+  }
+  unsigned long long now = get_now();
+  int diff = now - task->last;
+  ASSERT(diff >= 0);
+  task->leftmsec -= diff;
+  task->last = now;
+  if (task->leftmsec <= 0) {
+    task->timeout = 1;
+    return 0;
+  }
+
+  if (timeout == -1) {
+    timeout = task->leftmsec;
+  } else {
+    timeout = timeout > task->leftmsec ? task->leftmsec : timeout;
+  }
+
+  return timeout;
+}
+
 int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeout, poll_fun_t pollfunc) {
-	if(timeout > kMaxTimeoutMs) {
+	coroutine_t* self = coroutine_self();
+  timeout = fix_coroutine_timeout(self, timeout);
+  if (timeout == 0) {
+    // timeout
+    return 0;
+  }
+
+	if(timeout == -1 || timeout > kMaxTimeoutMs) {
 		timeout = kMaxTimeoutMs;
 	}
 	int epfd = ctx->fd;
-	coroutine_t* self = coroutine_self();
 
 	//1.struct change
 	poll_context_t arg;
@@ -327,7 +371,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	//3.add timeout
 	unsigned long long now = GetTickMS();
 	arg.time.expire = now + timeout;
-	int ret = addTimeout(ctx->timer, &arg.time, now);
+	int ret = add_timeout(ctx->timer, &arg.time, now);
 	if(ret != 0) {
 		errno = EINVAL;
 
@@ -342,7 +386,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 
 	yield_env(get_curr_thread_env());
 
-	removeFromLink(&arg.time);
+	remove_from_link(&arg.time);
 
 	for(nfds_t i = 0;i < nfds;i++) {
 		int fd = fds[i].fd;
@@ -423,10 +467,6 @@ void coroutine_init_env(const coroutine_options_t *options) {
     stack_size += 0x1000;
   }
   gOptions.stack_size = stack_size;
-
-  if (gOptions.max_io_timeout_ms == 0) {
-    gOptions.max_io_timeout_ms = kDefaultIoTimeoutMs;
-  }
 
   if (gOptions.task_per_thread == 0) {
     gOptions.task_per_thread = kDefaultTaskPerThread;

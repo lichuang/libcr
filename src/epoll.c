@@ -149,7 +149,7 @@ static inline void takeAllTimeout(epoll_timer_t *timer, unsigned long long now, 
   timer->start_idx += cnt - 1;
 }
 
-void addTail(timer_list_t *list, timer_item_t *item) {
+void add_tail(timer_list_t *list, timer_item_t *item) {
   if (item->parent != NULL) {
     return;
   }
@@ -167,7 +167,7 @@ void addTail(timer_list_t *list, timer_item_t *item) {
   item->parent = list;
 }
 
-void removeFromLink(timer_item_t *item) {
+void remove_from_link(timer_item_t *item) {
   timer_list_t *list = item->parent;
   if (!list) {
     return;
@@ -205,6 +205,7 @@ void coroutine_eventloop() {
   }
 
   epoll_context_t *epoll = env->epoll;
+  epoll->now = GetTickMS();
 
   if (epoll->result == NULL) {
     epoll->result = alloc_epoll_result(epoll->size);
@@ -224,11 +225,12 @@ void coroutine_eventloop() {
       if (item->prepare) {
         item->prepare(item, &result->events[i], active);
       } else {
-        addTail(active, item);
+        add_tail(active, item);
       }
     }
  
     unsigned long long now = GetTickMS();
+    epoll->now = now;
     takeAllTimeout(epoll->timer, now, timeout);
 
     timer_item_t *item = timeout->head;
@@ -251,7 +253,11 @@ void coroutine_eventloop() {
   }
 }
 
-int addTimeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now) {
+unsigned long long get_epoll_now(epoll_context_t *epoll) {
+  return epoll->now;
+}
+
+int add_timeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now) {
 	if(timer->start == 0) {
 		timer->start = now;
 		timer->start_idx = 0;
@@ -269,7 +275,7 @@ int addTimeout(epoll_timer_t *timer,timer_item_t *item, unsigned long long now) 
     return -1;
 	}
 
-	addTail(timer->items + (timer->start_idx + diff) % timer->size, item);
+	add_tail(timer->items + (timer->start_idx + diff) % timer->size, item);
 
 	return 0;
 }

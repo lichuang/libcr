@@ -10,11 +10,16 @@
 
 int count = 0;
 
+void *timeout(void *arg) {
+  printf("timeout\n");
+  return NULL;
+}
+
 void *echo(void *arg) {
   int fd = *((int*)arg);
   char buf[1024];
 
-  //printf("in echo\n");
+  printf("in echo\n");
   while (1) {
     ssize_t n = recv(fd, buf, sizeof(buf), 0);
     if (n <= 0) {
@@ -22,7 +27,7 @@ void *echo(void *arg) {
       break;
     }
     buf[n] = '\0';
-    //printf("echo recv: %s, n: %ld\n", buf, n);
+    printf("echo recv: %s, n: %ld\n", buf, n);
 
     n = send(fd, buf, n, 0);
     if (n <= 0) {
@@ -53,9 +58,15 @@ void *listener(void *arg) {
   while (1) {
     int fd = accept(socket_desc, NULL, NULL);
 
-    printf("accept %d, count:%d\n", fd, count);
+    //printf("accept %d, count:%d\n", fd, count);
     if (fd > 0) {
-      coroutine_new_task(echo, &fd);
+      coroutine_task_attr_t attr;
+      attr.enable_sys_hook = 1;
+      attr.max_timeout_ms = 5000;
+      attr.arg = &fd;
+      attr.fun = echo;
+      attr.timeout = timeout;
+      coroutine_new_task(&attr);
     }
   }
 
@@ -65,10 +76,17 @@ void *listener(void *arg) {
 int main() {
   coroutine_options_t options;
   options.stack_size = 8 * 1024;
-  options.enable_sys_hook = 1;
 
   coroutine_init_env(&options);
-  coroutine_new_task(listener, NULL);
+
+  coroutine_task_attr_t attr;
+  attr.enable_sys_hook = 1;
+  attr.max_timeout_ms = -1;
+  attr.arg = NULL;
+  attr.fun = listener;
+  attr.timeout = NULL;
+
+  coroutine_new_task(&attr);
   coroutine_eventloop();
 
   return 0;
