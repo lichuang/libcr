@@ -46,8 +46,6 @@ struct coroutine_t {
   env_t *env;
   void *arg;
   char main;
-  char enable_sys_hook;
-
   state_t state;
 
   context_t context;

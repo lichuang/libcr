@@ -53,7 +53,6 @@ typedef ssize_t (*recvfrom_fun_t)(int socket, void *buffer, size_t length,
 typedef size_t (*send_fun_t)(int socket, const void *buffer, size_t length, int flags);
 typedef ssize_t (*recv_fun_t)(int socket, void *buffer, size_t length, int flags);
 
-typedef int (*poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);
 typedef int (*setsockopt_fun_t)(int socket, int level, int option_name,
                          const void *option_value, socklen_t option_len);
 
@@ -365,7 +364,9 @@ int close(int fd) {
 		return gSysClose(fd);
 	}
 
-	free_by_fd(fd);
+  if (get_by_fd(fd) != NULL) {
+  	free_by_fd(fd);
+  }
 	return gSysClose(fd);
 }
 
