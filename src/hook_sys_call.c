@@ -111,6 +111,9 @@ typedef struct rpchook_t {
 static rpchook_t *gSocketFd[ 102400 ] = { 0 };
 
 static inline char is_enable_sys_hook(coroutine_t *co) {
+  if (!co) {
+    return 0;
+  }
   return co->task->attr.enable_sys_hook;
 }
 
