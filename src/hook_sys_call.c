@@ -71,7 +71,6 @@ typedef int (*unsetenv_fun_t)(const char *name);
 typedef char *(*getenv_fun_t)(const char *name);
 typedef struct hostent* (*gethostbyname_fun_t)(const char *name);
 //typedef res_state (*__res_state_fun_t)();
-typedef int (*__poll_fun_t)(struct pollfd fds[], nfds_t nfds, int timeout);
 
 // hook system functions
 static socket_fun_t gSysSocket;
@@ -546,6 +545,10 @@ int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
 	}
 
 	return poll_inner(get_epoll_context(),fds,nfds,timeout, gSysPoll);
+}
+
+int __poll(struct pollfd fds[], nfds_t nfds, int timeout) {
+  return poll(fds, nfds, timeout);
 }
 
 static void doSleep(unsigned long long timeout_ms) {
