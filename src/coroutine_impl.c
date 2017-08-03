@@ -16,7 +16,7 @@
 static const int kMaxCallStack = 128;
 static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
-static const int kMaxTimeoutMs = 40 * 1000;
+static const int kMaxTimeoutMs = 10;
 static const int kDefaultIoTimeoutMs = 1000;
 static const int kDefaultTaskPerThread = 1000;
 
@@ -284,6 +284,11 @@ static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
   task_t *task = co->task;
   // attr no timeout limit
   if (task->attr.max_timeout_ms == -1) {
+    if (timeout == 0) {
+      // since return 0 means alreay timeout,so here return 1 ms
+      return 1;
+    }
+
     return timeout;
   }
   if (task->timeout) {
@@ -306,7 +311,8 @@ static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
     timeout = timeout > task->leftmsec ? task->leftmsec : timeout;
   }
 
-  return timeout;
+  //return timeout;
+  return 10;
 }
 
 int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeout, poll_fun_t pollfunc) {

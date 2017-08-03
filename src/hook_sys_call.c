@@ -213,7 +213,7 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
   }
 
   // allocate poll array
-  struct pollfd *poll_fds = (struct pollfd*)malloc(total * sizeof(struct pollfd));
+  struct pollfd *poll_fds = (struct pollfd*)calloc(total, sizeof(struct pollfd));
   uint32_t poll_events[3] = {POLLIN, POLLOUT, 0};
   for (int i = 0; i < 3; ++i) {
     fd_set *set = fds[i];
@@ -235,28 +235,28 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
   }
 
   // convert pollfd to fd_set
-  n = 0;
+  int ret = 0;
   for (int i = 0; i < total; ++i) {
     struct pollfd *pfd = &poll_fds[i];
     if ((pfd->events & POLLIN) && readfds) {
       FD_SET(pfd->fd, readfds);
-      ++n;
+      ++ret;
     }
 
     if ((pfd->events & POLLOUT) && writefds) {
       FD_SET(pfd->fd, writefds);
-      ++n;
+      ++ret;
     }
 
     if ((pfd->events & ~(POLLIN | POLLOUT)) && exceptfds) {
       FD_SET(pfd->fd, exceptfds);
-      ++n;
+      ++ret;
     }
   }
 
 out:  
   free(poll_fds);
-  return n;
+  return ret;
 }
 
 int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
@@ -264,6 +264,11 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
 	if(!is_enable_sys_hook(co)) {
 	  return gSysAccept(listen_fd,addr,len);
 	}
+	rpchook_t *lp = get_by_fd(listen_fd);
+	if(!lp) {
+    alloc_by_fd(listen_fd);
+	  fcntl(listen_fd, F_SETFL, gSysFcntl(listen_fd, F_GETFL,0) | O_NONBLOCK);
+  }
 	int fd = gSysAccept(listen_fd,addr,len);
 
   do {
@@ -285,7 +290,7 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
     }
   } while (fd < 0);
 
-	rpchook_t *lp = alloc_by_fd(fd);
+	lp = alloc_by_fd(fd);
 
   int current_flags = gSysFcntl(fd ,F_GETFL, 0);
   int flag = current_flags;
@@ -346,6 +351,7 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 		return 0;
 	}
 
+/*  
 	//3.set errno
 	int err = 0;
 	socklen_t errlen = sizeof(err);
@@ -355,6 +361,7 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 	} else {
 		errno = ETIMEDOUT;
 	} 
+*/  
 	return ret;
 }
 
@@ -407,7 +414,10 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
         errno = EBADF;
         return -1;
       }
+      continue;
     }
+
+    return ret;
   } while(n < nbyte);
 
   return n;
@@ -448,7 +458,11 @@ ssize_t write(int fd, const void *buf, size_t nbyte) {
         errno = EBADF;
         return -1;
       }
+
+      continue;
     }
+
+    return ret;
   } while(n < nbyte);
 
   return n;
@@ -489,7 +503,10 @@ ssize_t send(int socket, const void *buffer, size_t length, int flags) {
         errno = EBADF;
         return -1;
       }
+      continue;
     }
+
+    return ret;
   } while(n < length);
 
   return n;
@@ -532,7 +549,10 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
         errno = EBADF;
         return -1;
       }
+      continue;
     }
+
+    return ret;
   } while(n < length);
 	
   return n;
