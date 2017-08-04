@@ -108,6 +108,15 @@ void coroutine_new_task(coroutine_task_attr_t *attr) {
   new_task(env->pool, attr);
 }
 
+void* coroutine_arg() {
+  coroutine_t *co = coroutine_self();
+  if (co) {
+    return co->task->arg;
+  }
+
+  return NULL;
+}
+
 void coroutine_free(coroutine_t *co) {
   free(co);
 }
