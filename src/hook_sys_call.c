@@ -31,6 +31,8 @@
 
 extern coroutine_options_t gOptions;
 
+#define HOOK_SYS_FUNC(name) if( !g_sys_##name ) { g_sys_##name = (name##_fun_t)dlsym(RTLD_NEXT,#name); }
+
 typedef int (*socket_fun_t)(int domain, int type, int protocol);
 typedef int (*accept_fun_t)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 typedef int (*connect_fun_t)(int socket, const struct sockaddr *address, socklen_t address_len);
@@ -73,30 +75,29 @@ typedef struct hostent* (*gethostbyname_fun_t)(const char *name);
 //typedef res_state (*__res_state_fun_t)();
 
 // hook system functions
-static socket_fun_t gSysSocket;
-static accept_fun_t gSysAccept;
-static connect_fun_t gSysConnect;
-static close_fun_t gSysClose;
-static select_fun_t gSysSelect;
+static socket_fun_t g_sys_socket;
+static accept_fun_t g_sys_accept;
+static connect_fun_t g_sys_connect;
+static close_fun_t g_sys_close;
 
-static read_fun_t gSysRead;
-static write_fun_t gSysWrite;
+static select_fun_t g_sys_select;
 
-static sendto_fun_t sSysSendto;
-static recvfrom_fun_t gSysRecvFrom;
+static sleep_fun_t g_sys_sleep;
+static usleep_fun_t g_sys_usleep;
+static nanosleep_fun_t g_sys_nanosleep;
 
-static send_fun_t gSysSend;
-static recv_fun_t gSysRecv;
+static read_fun_t g_sys_read;
+static write_fun_t g_sys_write;
 
-static poll_fun_t gSysPoll;
-static sleep_fun_t gSysSleep;
-static usleep_fun_t gSysUsleep;
-static nanosleep_fun_t gSysNanosleep;
+static send_fun_t g_sys_send;
+static recv_fun_t g_sys_recv;
 
-static setsockopt_fun_t gSysSetsockopt;
-static fcntl_fun_t gSysFcntl;
+static poll_fun_t g_sys_poll;
 
-static gethostbyname_fun_t gSysgethostbyname;
+static setsockopt_fun_t g_sys_setsockopt;
+static fcntl_fun_t g_sys_fcntl;
+
+static gethostbyname_fun_t g_sys_gethostbyname;
 
 typedef struct rpchook_t {
 	int user_flag;
@@ -146,10 +147,11 @@ static inline void free_by_fd(int fd) {
 
 
 int socket(int domain, int type, int protocol) {
+  HOOK_SYS_FUNC(socket);
 	if(!is_enable_sys_hook(coroutine_self())) {
-		return gSysSocket(domain,type,protocol);
+		return g_sys_socket(domain,type,protocol);
 	}
-	int fd = gSysSocket(domain,type,protocol);
+	int fd = g_sys_socket(domain,type,protocol);
 	if( fd < 0 ) {
 		return fd;
 	}
@@ -158,15 +160,17 @@ int socket(int domain, int type, int protocol) {
 	lp->domain = domain;
 	
   // set socket fd as non block by default
-	fcntl(fd, F_SETFL, gSysFcntl(fd, F_GETFL,0) | O_NONBLOCK);
+  HOOK_SYS_FUNC(fcntl);
+	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL,0) | O_NONBLOCK);
 
 	return fd;
 }
 
 int select(int nfds, fd_set *readfds, fd_set *writefds,
           fd_set *exceptfds, struct timeval *timeout) {
+  HOOK_SYS_FUNC(select);
 	if(!is_enable_sys_hook(coroutine_self())) {
-	  return gSysSelect(nfds, readfds, writefds, exceptfds, timeout);
+	  return g_sys_select(nfds, readfds, writefds, exceptfds, timeout);
 	}
 
   int timeout_ms = -1;
@@ -175,7 +179,7 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
   }
 
   if (timeout == 0) {
-	  return gSysSelect(nfds, readfds, writefds, exceptfds, timeout);
+	  return g_sys_select(nfds, readfds, writefds, exceptfds, timeout);
   }
 
   fd_set rfs, wfs, efs;
@@ -186,7 +190,7 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
   if (writefds) wfs = *writefds;
   if (exceptfds) efs = *exceptfds;
   struct timeval zero_tv = {0, 0};
-  int n = gSysSelect(nfds, (readfds ? &rfs : NULL),
+  int n = g_sys_select(nfds, (readfds ? &rfs : NULL),
     (writefds ? &wfs : NULL),
     (exceptfds ? &efs : NULL), &zero_tv);
   if (n != 0) {
@@ -260,16 +264,17 @@ out:
 }
 
 int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
+  HOOK_SYS_FUNC(accept);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-	  return gSysAccept(listen_fd,addr,len);
+	  return g_sys_accept(listen_fd,addr,len);
 	}
 	rpchook_t *lp = get_by_fd(listen_fd);
 	if(!lp) {
     alloc_by_fd(listen_fd);
-	  fcntl(listen_fd, F_SETFL, gSysFcntl(listen_fd, F_GETFL,0) | O_NONBLOCK);
+	  fcntl(listen_fd, F_SETFL, fcntl(listen_fd, F_GETFL,0) | O_NONBLOCK);
   }
-	int fd = gSysAccept(listen_fd,addr,len);
+	int fd = g_sys_accept(listen_fd,addr,len);
 
   do {
     if(fd < 0) {
@@ -283,7 +288,7 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
           errno = EBADF;
           return -1;
         }
-	      fd = gSysAccept(listen_fd,addr,len);
+	      fd = g_sys_accept(listen_fd,addr,len);
         continue;
       }
       return fd;
@@ -292,12 +297,12 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
 
 	lp = alloc_by_fd(fd);
 
-  int current_flags = gSysFcntl(fd ,F_GETFL, 0);
+  int current_flags = fcntl(fd ,F_GETFL, 0);
   int flag = current_flags;
   flag |= O_NONBLOCK;
 
   // set socket fd as non block by default
-  int ret = gSysFcntl(fd ,F_SETFL, flag);
+  int ret = fcntl(fd ,F_SETFL, flag);
   if (0 == ret && lp) {
     lp->user_flag = current_flags;
   }
@@ -306,13 +311,14 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
 }
 
 int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
+  HOOK_SYS_FUNC(connect);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysConnect(fd,address,address_len);
+		return g_sys_connect(fd,address,address_len);
 	}
 
 	//1.sys call
-	int ret = gSysConnect(fd,address,address_len);
+	int ret = g_sys_connect(fd,address,address_len);
 
 	rpchook_t *lp = get_by_fd(fd);
 	if(!lp) {
@@ -366,31 +372,33 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 }
 
 int close(int fd) {
+  HOOK_SYS_FUNC(close);
 	if(!is_enable_sys_hook(coroutine_self())) {
-		return gSysClose(fd);
+		return g_sys_close(fd);
 	}
 
   if (get_by_fd(fd) != NULL) {
   	free_by_fd(fd);
   }
-	return gSysClose(fd);
+	return g_sys_close(fd);
 }
 
 ssize_t read(int fd, void *buf, size_t nbyte) {
+  HOOK_SYS_FUNC(read);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysRead(fd,buf,nbyte);
+		return g_sys_read(fd,buf,nbyte);
 	}
 
 	rpchook_t *lp = get_by_fd(fd);
 
 	if(!lp) {
-		return gSysRead(fd,buf,nbyte);
+		return g_sys_read(fd,buf,nbyte);
   }
 
   ssize_t n = 0;
   do {
-		ssize_t ret = gSysRead(fd, buf + n, nbyte - n);
+		ssize_t ret = g_sys_read(fd, buf + n, nbyte - n);
     if (ret == 0) {
       return n;
     }
@@ -424,20 +432,21 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
 }
 
 ssize_t write(int fd, const void *buf, size_t nbyte) {
+  HOOK_SYS_FUNC(write);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysWrite(fd,buf,nbyte);
+		return g_sys_write(fd,buf,nbyte);
 	}
 
 	rpchook_t *lp = get_by_fd(fd);
 
 	if(!lp) {
-		return gSysWrite(fd,buf,nbyte);
+		return g_sys_write(fd,buf,nbyte);
 	}
 
   ssize_t n = 0;
   do {
-		ssize_t ret = gSysWrite(fd, buf + n, nbyte - n);
+		ssize_t ret = g_sys_write(fd, buf + n, nbyte - n);
     if (ret == 0) {
       return n;
     }
@@ -469,20 +478,21 @@ ssize_t write(int fd, const void *buf, size_t nbyte) {
 }
 
 ssize_t send(int socket, const void *buffer, size_t length, int flags) {
+  HOOK_SYS_FUNC(send);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysSend(socket,buffer,length,flags);
+		return g_sys_send(socket,buffer,length,flags);
 	}
 
 	rpchook_t *lp = get_by_fd(socket);
 
 	if( !lp) {
-		return gSysSend(socket,buffer,length,flags);
+		return g_sys_send(socket,buffer,length,flags);
 	}
 
   ssize_t n = 0;
   do {
-		ssize_t ret = gSysSend(socket, buffer + n, length - n, flags);
+		ssize_t ret = g_sys_send(socket, buffer + n, length - n, flags);
     if (ret == 0) {
       return n;
     }
@@ -513,19 +523,20 @@ ssize_t send(int socket, const void *buffer, size_t length, int flags) {
 }
 
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
+  HOOK_SYS_FUNC(recv);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysRecv(socket,buffer,length,flags);
+		return g_sys_recv(socket,buffer,length,flags);
 	}
 	rpchook_t *lp = get_by_fd(socket);
 
 	if(!lp) {
-		return gSysRecv( socket,buffer,length,flags );
+		return g_sys_recv(socket,buffer,length,flags);
 	}
 
   ssize_t n = 0;
   do {
-		ssize_t ret = gSysRecv(socket, buffer + n, length - n, flags);
+		ssize_t ret = g_sys_recv(socket, buffer + n, length - n, flags);
     if (ret == 0) {
       return n;
     }
@@ -559,12 +570,13 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
 }
 
 int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
+  HOOK_SYS_FUNC(poll);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysPoll(fds,nfds,timeout);
+		return g_sys_poll(fds,nfds,timeout);
 	}
 
-	return poll_inner(get_epoll_context(),fds,nfds,timeout, gSysPoll);
+	return poll_inner(get_epoll_context(),fds,nfds,timeout, g_sys_poll);
 }
 
 int __poll(struct pollfd fds[], nfds_t nfds, int timeout) {
@@ -578,9 +590,10 @@ static void doSleep(unsigned long long timeout_ms) {
 }
 
 unsigned int sleep(unsigned int seconds) {
+  HOOK_SYS_FUNC(sleep);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysSleep(seconds);
+		return g_sys_sleep(seconds);
 	}
 
   doSleep(seconds * 1000);
@@ -588,9 +601,10 @@ unsigned int sleep(unsigned int seconds) {
 }
 
 int usleep(useconds_t usec) {
+  HOOK_SYS_FUNC(usleep);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysUsleep(usec);
+		return g_sys_usleep(usec);
 	}
 
   doSleep(usec / 1000);
@@ -599,9 +613,10 @@ int usleep(useconds_t usec) {
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {
+  HOOK_SYS_FUNC(nanosleep);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysNanosleep(req, rem);
+		return g_sys_nanosleep(req, rem);
 	}
   int timeout_ms = req->tv_sec * 1000 + req->tv_nsec / 1000000;
 
@@ -612,9 +627,10 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
 
 int setsockopt(int fd, int level, int option_name,
 			                 const void *option_value, socklen_t option_len) {
+  HOOK_SYS_FUNC(setsockopt);
   coroutine_t *co = coroutine_self();
 	if(!is_enable_sys_hook(co)) {
-		return gSysSetsockopt(fd,level,option_name,option_value,option_len);
+		return g_sys_setsockopt(fd,level,option_name,option_value,option_len);
 	}
 
 	rpchook_t *lp = get_by_fd(fd);
@@ -627,10 +643,11 @@ int setsockopt(int fd, int level, int option_name,
 			memcpy(&lp->write_timeout,val,sizeof(*val));
 		}
 	}
-	return gSysSetsockopt(fd,level,option_name,option_value,option_len);
+	return g_sys_setsockopt(fd,level,option_name,option_value,option_len);
 }
 
 int fcntl(int fildes, int cmd, ...) {
+  HOOK_SYS_FUNC(fcntl);
 	if(fildes < 0) {
 		return -1;
 	}
@@ -643,20 +660,20 @@ int fcntl(int fildes, int cmd, ...) {
 	switch(cmd) {
 		case F_DUPFD: {
 			int param = va_arg(arg_list,int);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 		case F_GETFD: {
-			ret = gSysFcntl(fildes,cmd);
+			ret = g_sys_fcntl(fildes,cmd);
 			break;
 		}
 		case F_SETFD: {
 			int param = va_arg(arg_list,int);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 		case F_GETFL: {
-			ret = gSysFcntl(fildes,cmd);
+			ret = g_sys_fcntl(fildes,cmd);
 			break;
 		}
 		case F_SETFL: {
@@ -666,34 +683,34 @@ int fcntl(int fildes, int cmd, ...) {
 			if(is_enable_sys_hook(coroutine_self()) && lp) {
 				flag |= O_NONBLOCK;
 			}
-			ret = gSysFcntl(fildes,cmd,flag);
+			ret = g_sys_fcntl(fildes,cmd,flag);
 			if(0 == ret && lp) {
 				lp->user_flag = param;
 			}
 			break;
 		}
 		case F_GETOWN: {
-			ret = gSysFcntl(fildes,cmd);
+			ret = g_sys_fcntl(fildes,cmd);
 			break;
 		}
 		case F_SETOWN: {
 			int param = va_arg(arg_list,int);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 		case F_GETLK: {
 			struct flock *param = va_arg(arg_list,struct flock *);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 		case F_SETLK: {
 			struct flock *param = va_arg(arg_list,struct flock *);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 		case F_SETLKW: {
 			struct flock *param = va_arg(arg_list,struct flock *);
-			ret = gSysFcntl(fildes,cmd,param);
+			ret = g_sys_fcntl(fildes,cmd,param);
 			break;
 		}
 	}
@@ -755,36 +772,7 @@ struct hostent *coroutine_gethostbyname(const char *name) {
 
 struct hostent *gethostbyname(const char *name) {
   if (!is_enable_sys_hook(coroutine_self())) {
-    return gSysgethostbyname(name);
+    return g_sys_gethostbyname(name);
   }
   return coroutine_gethostbyname(name);
-}
-
-void once_init() {
-  gSysSocket   = (socket_fun_t)dlsym(RTLD_NEXT,"socket");
-  gSysAccept   = (accept_fun_t)dlsym(RTLD_NEXT,"accept");
-  gSysConnect = (connect_fun_t)dlsym(RTLD_NEXT,"connect");
-  gSysClose   = (close_fun_t)dlsym(RTLD_NEXT,"close");
-
-  gSysSelect     = (select_fun_t)dlsym(RTLD_NEXT,"select");
-
-  gSysSleep     = (sleep_fun_t)dlsym(RTLD_NEXT,"sleep");
-  gSysUsleep     = (usleep_fun_t)dlsym(RTLD_NEXT,"usleep");
-  gSysNanosleep     = (nanosleep_fun_t)dlsym(RTLD_NEXT,"nanosleep");
-
-  gSysRead     = (read_fun_t)dlsym(RTLD_NEXT,"read");
-  gSysWrite   = (write_fun_t)dlsym(RTLD_NEXT,"write");
-
-  sSysSendto   = (sendto_fun_t)dlsym(RTLD_NEXT,"sendto");
-  gSysRecvFrom = (recvfrom_fun_t)dlsym(RTLD_NEXT,"recvfrom");
-
-  gSysSend     = (send_fun_t)dlsym(RTLD_NEXT,"send");
-  gSysRecv     = (recv_fun_t)dlsym(RTLD_NEXT,"recv");
-
-  gSysPoll     = (poll_fun_t)dlsym(RTLD_NEXT,"poll");
-
-  gSysSetsockopt = (setsockopt_fun_t)dlsym(RTLD_NEXT,"setsockopt");
-  gSysFcntl   = (fcntl_fun_t)dlsym(RTLD_NEXT,"fcntl");
-
-  gSysgethostbyname = (gethostbyname_fun_t)dlsym(RTLD_NEXT, "gethostbyname");
 }

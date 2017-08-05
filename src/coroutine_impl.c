@@ -461,11 +461,7 @@ int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int ti
 	return poll_inner(ctx, fds, nfds, timeout_ms, NULL);
 }
 
-static pthread_once_t once = PTHREAD_ONCE_INIT;
-extern void once_init();
-
 void coroutine_init_env(const coroutine_options_t *options) {
-  pthread_once(&once, once_init);
   coroutine_pthread_key_init();
 
   memcpy(&gOptions, options, sizeof(coroutine_options_t));
