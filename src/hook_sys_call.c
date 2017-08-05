@@ -126,9 +126,9 @@ static inline rpchook_t* get_by_fd(int fd) {
 static inline rpchook_t * alloc_by_fd(int fd) {
 	if( fd > -1 && fd < (int)sizeof(gSocketFd) / (int)sizeof(gSocketFd[0]) ) {
 		rpchook_t *lp = (rpchook_t*)calloc(1,sizeof(rpchook_t));
-		lp->read_timeout.tv_sec = 1000;
-		lp->write_timeout.tv_sec = 1000;
-		gSocketFd[ fd ] = lp;
+		lp->read_timeout.tv_usec = 1000;
+		lp->write_timeout.tv_usec = 1000;
+		gSocketFd[fd] = lp;
 		return lp;
 	}
 	return NULL;
@@ -383,6 +383,27 @@ int close(int fd) {
 	return g_sys_close(fd);
 }
 
+// 1: io ready
+// 0: timeout
+// -1: error
+static int wait_io_ready(coroutine_t *co, int fd, int events, int timeout) {
+  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    struct pollfd pf = {0};
+    pf.fd = fd;
+    pf.events = (POLLIN | POLLERR | POLLHUP);
+
+    if(!poll(&pf,1,timeout) && co->task->timeout) {
+      close(fd);
+      errno = EBADF;
+      return 0;
+    }
+
+    return 1;
+  }
+
+  return -1;
+}
+
 ssize_t read(int fd, void *buf, size_t nbyte) {
   HOOK_SYS_FUNC(read);
   coroutine_t *co = coroutine_self();
@@ -396,39 +417,9 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
 		return g_sys_read(fd,buf,nbyte);
   }
 
-  ssize_t n = 0;
-  do {
-		ssize_t ret = g_sys_read(fd, buf + n, nbyte - n);
-    if (ret == 0) {
-      return n;
-    }
-
-    if (ret > 0) {
-      n += ret;
-      continue;
-    }
-
-    // at here means ret < 0
-    if (n > 0) {
-      return n;
-    }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      struct pollfd pf = {0};
-      pf.fd = fd;
-      pf.events = (POLLIN | POLLERR | POLLHUP);
-
-      if(!poll(&pf,1,-1) && co->task->timeout) {
-        close(fd);
-        errno = EBADF;
-        return -1;
-      }
-      continue;
-    }
-
-    return ret;
-  } while(n < nbyte);
-
-  return n;
+  int timeout = (lp->read_timeout.tv_sec * 1000) + (lp->read_timeout.tv_usec / 1000);
+  wait_io_ready(co, fd, POLLIN | POLLERR | POLLHUP, timeout);
+	return g_sys_read(fd, buf, nbyte);
 }
 
 ssize_t write(int fd, const void *buf, size_t nbyte) {
@@ -444,36 +435,33 @@ ssize_t write(int fd, const void *buf, size_t nbyte) {
 		return g_sys_write(fd,buf,nbyte);
 	}
 
+  int timeout = (lp->write_timeout.tv_sec * 1000) + (lp->write_timeout.tv_usec / 1000);
   ssize_t n = 0;
-  do {
-		ssize_t ret = g_sys_write(fd, buf + n, nbyte - n);
-    if (ret == 0) {
-      return n;
-    }
-
-    if (ret > 0) {
-      n += ret;
-      continue;
-    }
-
-    // at here means ret < 0
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      struct pollfd pf = { 0 };
-      pf.fd = fd;
-      pf.events = (POLLIN | POLLERR | POLLHUP);
-
-      if(!poll(&pf,1,-1) && co->task->timeout) {
-        close(fd);
-        errno = EBADF;
-        return -1;
-      }
-
-      continue;
-    }
-
+  ssize_t ret = g_sys_write(fd, buf, nbyte);
+  if (ret == 0) {
     return ret;
-  } while(n < nbyte);
+  }
 
+  if (ret > 0) {
+    n += ret;
+  }
+
+  while (n < nbyte) {
+    ret = wait_io_ready(co, fd, POLLOUT | POLLERR | POLLHUP, timeout);
+    if (ret == 0 || ret == -1) {
+      break;
+    }
+
+    ret = g_sys_write(fd, buf + n, nbyte - n);
+    if (ret <= 0) {
+      break;
+    }
+    n += ret;
+  }
+
+  if (ret <= 0 && n == 0) {
+    return ret;
+  }
   return n;
 }
 
@@ -490,35 +478,33 @@ ssize_t send(int socket, const void *buffer, size_t length, int flags) {
 		return g_sys_send(socket,buffer,length,flags);
 	}
 
+  int timeout = (lp->write_timeout.tv_sec * 1000) + (lp->write_timeout.tv_usec / 1000);
   ssize_t n = 0;
-  do {
-		ssize_t ret = g_sys_send(socket, buffer + n, length - n, flags);
-    if (ret == 0) {
-      return n;
-    }
-
-    if (ret > 0) {
-      n += ret;
-      continue;
-    }
-
-    // at here means ret < 0
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      struct pollfd pf = { 0 };
-      pf.fd = socket;
-      pf.events = (POLLIN | POLLERR | POLLHUP);
-
-      if(!poll(&pf,1,-1) && co->task->timeout) {
-        close(socket);
-        errno = EBADF;
-        return -1;
-      }
-      continue;
-    }
-
+  ssize_t ret = g_sys_send(socket, buffer, length, flags);
+  if (ret == 0) {
     return ret;
-  } while(n < length);
+  }
 
+  if (ret > 0) {
+    n += ret;
+  }
+
+  while (n < length) {
+    ret = wait_io_ready(co, socket, POLLOUT | POLLERR | POLLHUP, timeout);
+    if (ret == 0 || ret == -1) {
+      break;
+    }
+
+    ret = g_sys_send(socket, buffer + n, length - n, flags);
+    if (ret <= 0) {
+      break;
+    }
+    n += ret;
+  }
+
+  if (ret <= 0 && n == 0) {
+    return ret;
+  }
   return n;
 }
 
@@ -534,39 +520,9 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
 		return g_sys_recv(socket,buffer,length,flags);
 	}
 
-  ssize_t n = 0;
-  do {
-		ssize_t ret = g_sys_recv(socket, buffer + n, length - n, flags);
-    if (ret == 0) {
-      return n;
-    }
-
-    if (ret > 0) {
-      n += ret;
-      continue;
-    }
-
-    // at here means ret < 0
-    if (n > 0) {
-      return n;
-    }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      struct pollfd pf = { 0 };
-      pf.fd = socket;
-      pf.events = (POLLIN | POLLERR | POLLHUP);
-
-      if(!poll(&pf,1,-1) && co->task->timeout) {
-        close(socket);
-        errno = EBADF;
-        return -1;
-      }
-      continue;
-    }
-
-    return ret;
-  } while(n < length);
-	
-  return n;
+  int timeout = (lp->read_timeout.tv_sec * 1000) + (lp->read_timeout.tv_usec / 1000);
+  wait_io_ready(co, socket, POLLIN | POLLERR | POLLHUP, timeout);
+  return g_sys_recv(socket, buffer, length, flags);
 }
 
 int poll(struct pollfd fds[], nfds_t nfds, int timeout) {

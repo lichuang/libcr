@@ -16,7 +16,8 @@
 static const int kMaxCallStack = 128;
 static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
-static const int kMaxTimeoutMs = 10;
+// attention: kMaxTimeoutMs MUST NOT bigger than epoll timer size
+static const int kMaxTimeoutMs = 1000 * 10;
 static const int kDefaultIoTimeoutMs = 1000;
 static const int kDefaultTaskPerThread = 1000;
 
