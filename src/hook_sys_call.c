@@ -384,24 +384,19 @@ int close(int fd) {
 }
 
 // 1: io ready
-// 0: timeout
-// -1: error
+// -1: timeout
 static int wait_io_ready(coroutine_t *co, int fd, int events, int timeout) {
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
-    struct pollfd pf = {0};
-    pf.fd = fd;
-    pf.events = (POLLIN | POLLERR | POLLHUP);
+  struct pollfd pf = {0};
+  pf.fd = fd;
+  pf.events = (POLLIN | POLLERR | POLLHUP);
 
-    if(!poll(&pf,1,timeout) && co->task->timeout) {
-      close(fd);
-      errno = EBADF;
-      return 0;
-    }
-
-    return 1;
+  if(!poll(&pf,1,timeout) && co->task->timeout) {
+    close(fd);
+    errno = EBADF;
+    return -1;
   }
 
-  return -1;
+  return 1;
 }
 
 ssize_t read(int fd, void *buf, size_t nbyte) {
@@ -418,8 +413,31 @@ ssize_t read(int fd, void *buf, size_t nbyte) {
   }
 
   int timeout = (lp->read_timeout.tv_sec * 1000) + (lp->read_timeout.tv_usec / 1000);
-  wait_io_ready(co, fd, POLLIN | POLLERR | POLLHUP, timeout);
-	return g_sys_read(fd, buf, nbyte);
+
+  ssize_t n = 0;
+  int ready;
+  do {
+    ready = wait_io_ready(co, fd, POLLIN | POLLERR | POLLHUP, timeout);
+    if (ready <= 0) {
+      break;
+    }
+
+	  ssize_t ret = g_sys_read(fd, buf + n, nbyte - n);
+    if (ret < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        break;
+      }
+      continue;
+    } else if (ret == 0) {
+      break;
+    }
+
+    n += ret;
+  } while (n <= 0 && n < nbyte);
+  if (ready <= 0 && n == 0) {
+    return ready;
+  }
+  return n;
 }
 
 ssize_t write(int fd, const void *buf, size_t nbyte) {
@@ -448,14 +466,21 @@ ssize_t write(int fd, const void *buf, size_t nbyte) {
 
   while (n < nbyte) {
     ret = wait_io_ready(co, fd, POLLOUT | POLLERR | POLLHUP, timeout);
-    if (ret == 0 || ret == -1) {
+    if (ret <= 0) {
       break;
     }
 
     ret = g_sys_write(fd, buf + n, nbyte - n);
-    if (ret <= 0) {
+
+    if (ret < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        break;
+      }
+      continue;
+    } else if (ret == 0) {
       break;
     }
+
     n += ret;
   }
 
@@ -491,12 +516,17 @@ ssize_t send(int socket, const void *buffer, size_t length, int flags) {
 
   while (n < length) {
     ret = wait_io_ready(co, socket, POLLOUT | POLLERR | POLLHUP, timeout);
-    if (ret == 0 || ret == -1) {
+    if (ret <= 0) {
       break;
     }
 
     ret = g_sys_send(socket, buffer + n, length - n, flags);
-    if (ret <= 0) {
+    if (ret < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        break;
+      }
+      continue;
+    } else if (ret == 0) {
       break;
     }
     n += ret;
@@ -521,8 +551,32 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
 	}
 
   int timeout = (lp->read_timeout.tv_sec * 1000) + (lp->read_timeout.tv_usec / 1000);
-  wait_io_ready(co, socket, POLLIN | POLLERR | POLLHUP, timeout);
-  return g_sys_recv(socket, buffer, length, flags);
+
+  ssize_t n = 0;
+  int ready = 0;
+
+  do {
+    ready = wait_io_ready(co, socket, POLLIN | POLLERR | POLLHUP, timeout);
+    if (ready <= 0) {
+      break;
+    }
+
+    ssize_t ret = g_sys_recv(socket, buffer + n, length - n, flags);
+    if (ret < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        break;
+      }
+      continue;
+    } else if (ret == 0) {
+      break;
+    }
+
+    n += ret;
+  } while (n <= 0 && n < length);
+  if (ready <= 0 && n == 0) {
+    return ready;
+  }
+  return n;
 }
 
 int poll(struct pollfd fds[], nfds_t nfds, int timeout) {
