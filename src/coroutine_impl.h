@@ -20,11 +20,13 @@ struct env_t {
 
   taskpool_t *pool;
 
+  void *arg;
+
   coroutine_t *occupy;
   coroutine_t *pending;
 };
 
-struct stack_t {
+struct coroutine_stack_t {
   coroutine_t *coroutine;
   int size;
   char *end;
@@ -54,7 +56,7 @@ struct coroutine_t {
   unsigned int save_size;
   char *save_buffer;
 
-  stack_t *stack;
+  coroutine_stack_t *stack;
 
   task_t *task;
 

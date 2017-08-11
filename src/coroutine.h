@@ -37,7 +37,9 @@ void coroutine_new_task(coroutine_task_attr_t *attr);
 
 void* coroutine_arg();
 
-void coroutine_eventloop();
+void* coroutine_thread_arg();
+
+void coroutine_eventloop(void *arg);
 
 #ifdef __cplusplus
 }

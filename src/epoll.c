@@ -197,12 +197,14 @@ void remove_from_link(timer_item_t *item) {
   item->parent = NULL;
 }
 
-void coroutine_eventloop() {
+void coroutine_eventloop(void *arg) {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
     do_init_curr_thread_env();
     env = get_curr_thread_env();
   }
+
+  env->arg = arg;
 
   epoll_context_t *epoll = env->epoll;
   epoll->now = GetTickMS();

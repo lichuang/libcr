@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/poll.h>
 #include <poll.h>
+#include <signal.h>
 #include "assert.h"
 #include "coroutine.h"
 #include "coroutine_impl.h"
@@ -34,8 +35,8 @@ env_t* get_curr_thread_env() {
   return gEnv[get_pid()];
 }
 
-static inline stack_t* alloc_stack(int size) {
-  stack_t *stack = (stack_t*)malloc(sizeof(stack_t));
+static inline coroutine_stack_t* alloc_stack(int size) {
+  coroutine_stack_t *stack = (coroutine_stack_t*)malloc(sizeof(coroutine_stack_t));
   stack->size = size;
   stack->start = (char*)malloc(sizeof(char) * size);
   stack->end = stack->start + size;
@@ -53,7 +54,7 @@ static coroutine_t* create_env(env_t *env, coroutine_fun_t func, void *arg) {
   co->arg = arg;
   co->state = INIT;
 
-  stack_t *stack = alloc_stack(stack_size);
+  coroutine_stack_t *stack = alloc_stack(stack_size);
   co->stack = stack;
   co->context.sp = stack->start;
   co->context.size = stack_size;
@@ -111,11 +112,20 @@ void coroutine_new_task(coroutine_task_attr_t *attr) {
 
 void* coroutine_arg() {
   coroutine_t *co = coroutine_self();
-  if (co) {
+  if (co && co->task) {
     return co->task->arg;
   }
 
   return NULL;
+}
+
+void* coroutine_thread_arg() {
+  env_t *env = get_curr_thread_env();
+  if (env == NULL) {
+    return NULL;
+  }
+
+  return env->arg;
 }
 
 void coroutine_free(coroutine_t *co) {
@@ -241,7 +251,7 @@ typedef struct poll_context_t {
  *   				POLLNVAL
  *
  * */
-static inline uint32_t PollEvent2Epoll(short events) {
+static inline uint32_t poll_event_to_epoll(short events) {
 	uint32_t e = 0;	
 	if( events & POLLIN ) 	e |= EPOLLIN;
 	if( events & POLLOUT )  e |= EPOLLOUT;
@@ -252,7 +262,7 @@ static inline uint32_t PollEvent2Epoll(short events) {
 	return e;
 }
 
-static inline short EpollEvent2Poll(uint32_t events) {
+static inline short epoll_event_to_poll(uint32_t events) {
 	short e = 0;	
 	if( events & EPOLLIN ) 	e |= POLLIN;
 	if( events & EPOLLOUT ) e |= POLLOUT;
@@ -263,13 +273,13 @@ static inline short EpollEvent2Poll(uint32_t events) {
 	return e;
 }
 
-static void processPollEvent(timer_item_t *item) {
+static void process_poll_event(timer_item_t *item) {
   coroutine_resume(item->coroutine);
 }
 
-static void preparePollEvent(timer_item_t *item,struct epoll_event *ev,timer_list_t *active) {
+static void prepare_poll_event(timer_item_t *item,struct epoll_event *ev,timer_list_t *active) {
   poll_item_t *poll_item = (poll_item_t*)item->arg;
-	poll_item->self->revents = EpollEvent2Poll(ev->events);
+	poll_item->self->revents = epoll_event_to_poll(ev->events);
 
 	poll_context_t *poll = poll_item->poll;
 	poll->raise_cnt++;
@@ -353,23 +363,23 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 	}
 	memset(arg.items, 0, nfds * sizeof(poll_item_t));
 
-	arg.time.process = processPollEvent;
+	arg.time.process = process_poll_event;
 	arg.time.coroutine = self;
-  arg.time.arg = &arg;
+  //arg.time.arg = &arg;
 	
 	//2. add epoll
 	for(nfds_t i = 0; i < nfds; i++) {
 		arg.items[i].self = arg.fds + i;
 		arg.items[i].poll = &arg;
 
-		arg.items[i].time.prepare = preparePollEvent;
+		arg.items[i].time.prepare = prepare_poll_event;
 		arg.items[i].time.coroutine = self;
 		arg.items[i].time.arg = &(arg.items[i]);
-		struct epoll_event *ev = &(arg.items[i].event);
 
 		if(fds[i].fd > -1) {
+		  struct epoll_event *ev = &(arg.items[i].event);
 			ev->data.ptr = &(arg.items[i].time);
-			ev->events = PollEvent2Epoll(fds[i].events);
+			ev->events = poll_event_to_epoll(fds[i].events);
 
 			int ret = do_epoll_ctl(epfd,EPOLL_CTL_ADD, fds[i].fd, ev);
 			if (ret < 0 && errno == EPERM && nfds == 1 && pollfunc != NULL) {
@@ -483,4 +493,6 @@ void coroutine_init_env(const coroutine_options_t *options) {
   if (gOptions.task_per_thread == 0) {
     gOptions.task_per_thread = kDefaultTaskPerThread;
   }
+
+  signal(SIGPIPE, SIG_IGN);
 }

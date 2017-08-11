@@ -19,8 +19,8 @@ typedef struct epoll_result_t epoll_result_t;
 struct context_t;
 typedef struct context_t context_t;
 
-struct stack_t;
-typedef struct stack_t stack_t;
+struct coroutine_stack_t;
+typedef struct coroutine_stack_t coroutine_stack_t;
 
 struct timer_item_t;
 typedef struct timer_item_t timer_item_t;
