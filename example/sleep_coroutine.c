@@ -43,7 +43,7 @@ int main() {
 
   attr.fun = fun2;
   coroutine_new_task(&attr);
-  coroutine_eventloop();
+  coroutine_eventloop(NULL);
 
   return 0;
 }
