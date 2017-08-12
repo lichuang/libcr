@@ -33,7 +33,8 @@ typedef struct coroutine_task_attr_t {
   coroutine_fun_t timeout;
 } coroutine_task_attr_t;
 
-void coroutine_new_task(coroutine_task_attr_t *attr);
+// return 0 success, return -1 fail
+int coroutine_new_task(coroutine_task_attr_t *attr);
 
 void* coroutine_arg();
 

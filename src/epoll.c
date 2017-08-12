@@ -42,6 +42,10 @@ static epoll_timer_t* alloc_timer(int size) {
   timer->size = size;
 
   timer->items = (timer_list_t*)calloc(size, sizeof(timer_list_t));
+  int i = 0;
+  for (i = 0; i < size; ++i) {
+    timer->items[i].head = timer->items[i].tail = NULL;
+  }
   timer->start_idx = 0;
   timer->start = GetTickMS();
 
@@ -77,7 +81,7 @@ void free_epoll(epoll_context_t *epoll) {
   }
 }
 
-static inline void popHead(timer_list_t *list) {
+static void popHead(timer_list_t *list) {
   if (!list->head) {
     return;
   }
@@ -97,7 +101,7 @@ static inline void popHead(timer_list_t *list) {
   }
 }
 
-static inline void join(timer_list_t *list, timer_list_t *other) {
+static void join(timer_list_t *list, timer_list_t *other) {
   if (!other->head) {
     return;
   }
@@ -121,7 +125,7 @@ static inline void join(timer_list_t *list, timer_list_t *other) {
   other->head = other->tail = NULL;
 }
 
-static inline void takeAllTimeout(epoll_timer_t *timer, unsigned long long now, timer_list_t *result) {
+static void takeAllTimeout(epoll_timer_t *timer, unsigned long long now, timer_list_t *result) {
   if (timer->start == 0) {
     timer->start = now;
     timer->start_idx = 0;

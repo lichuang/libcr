@@ -38,14 +38,14 @@ static void *task_main(void *arg) {
   return NULL;
 }
 
-void new_task(taskpool_t *pool, coroutine_task_attr_t *attr) {
+int new_task(taskpool_t *pool, coroutine_task_attr_t *attr) {
   if (pool->working == pool->size) {
-    // TODO
+    return -1;
   }
 
   task_t *task = pool->free;
   if (task == NULL) {
-    // TODO
+    return -1;
   }
 
   pool->free = task->next;
@@ -59,6 +59,8 @@ void new_task(taskpool_t *pool, coroutine_task_attr_t *attr) {
   task->last = get_now();
   memcpy(&task->attr, attr, sizeof(coroutine_task_attr_t));
   coroutine_resume(task->coroutine);
+
+  return 0;
 }
 
 taskpool_t* create_thread_taskpool(env_t *env, int size) {

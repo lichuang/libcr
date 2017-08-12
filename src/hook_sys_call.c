@@ -75,29 +75,29 @@ typedef struct hostent* (*gethostbyname_fun_t)(const char *name);
 //typedef res_state (*__res_state_fun_t)();
 
 // hook system functions
-static socket_fun_t g_sys_socket;
-static accept_fun_t g_sys_accept;
-static connect_fun_t g_sys_connect;
-static close_fun_t g_sys_close;
+static socket_fun_t g_sys_socket = NULL;
+static accept_fun_t g_sys_accept = NULL;
+static connect_fun_t g_sys_connect = NULL;
+static close_fun_t g_sys_close = NULL;
 
-static select_fun_t g_sys_select;
+static select_fun_t g_sys_select = NULL;
 
-static sleep_fun_t g_sys_sleep;
-static usleep_fun_t g_sys_usleep;
-static nanosleep_fun_t g_sys_nanosleep;
+static sleep_fun_t g_sys_sleep = NULL;
+static usleep_fun_t g_sys_usleep = NULL;
+static nanosleep_fun_t g_sys_nanosleep = NULL;
 
-static read_fun_t g_sys_read;
-static write_fun_t g_sys_write;
+static read_fun_t g_sys_read = NULL;
+static write_fun_t g_sys_write = NULL;
 
-static send_fun_t g_sys_send;
-static recv_fun_t g_sys_recv;
+static send_fun_t g_sys_send = NULL;
+static recv_fun_t g_sys_recv = NULL;
 
-static poll_fun_t g_sys_poll;
+static poll_fun_t g_sys_poll = NULL;
 
-static setsockopt_fun_t g_sys_setsockopt;
-static fcntl_fun_t g_sys_fcntl;
+static setsockopt_fun_t g_sys_setsockopt = NULL;
+static fcntl_fun_t g_sys_fcntl = NULL;
 
-static gethostbyname_fun_t g_sys_gethostbyname;
+static gethostbyname_fun_t g_sys_gethostbyname = NULL;
 
 typedef struct rpchook_t {
 	int user_flag;
@@ -107,7 +107,7 @@ typedef struct rpchook_t {
 	struct timeval read_timeout;
 	struct timeval write_timeout;
 } rpchook_t;
-static rpchook_t *gSocketFd[ 102400 ] = { 0 };
+static rpchook_t *gSocketFd[102400] = { 0 };
 
 static inline char is_enable_sys_hook(coroutine_t *co) {
   if (!co || !co->task) {

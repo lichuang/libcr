@@ -38,6 +38,6 @@ struct taskpool_t {
 };
 
 taskpool_t* create_thread_taskpool(env_t *env, int size);
-void new_task(taskpool_t *, coroutine_task_attr_t *attr);
+int new_task(taskpool_t *, coroutine_task_attr_t *attr);
 
 #endif  // __COROUTINE_TASK_H__

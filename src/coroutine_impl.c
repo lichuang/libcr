@@ -100,14 +100,14 @@ coroutine_t* coroutine_new(coroutine_fun_t fun, void *arg) {
   return create_env(env, fun, arg);
 }
 
-void coroutine_new_task(coroutine_task_attr_t *attr) {
+int coroutine_new_task(coroutine_task_attr_t *attr) {
   env_t *env = get_curr_thread_env();
   if (env == NULL) {
     do_init_curr_thread_env();
     env = get_curr_thread_env();
   }
 
-  new_task(env->pool, attr);
+  return new_task(env->pool, attr);
 }
 
 void* coroutine_arg() {
@@ -136,7 +136,7 @@ void coroutine_swap(coroutine_t* curr, coroutine_t* pending) {
  	env_t* env = get_curr_thread_env();
 
 	//get curr stack sp
-	char c;
+	char c = 0;
 	curr->stack_sp = &c;
 
   env->pending = NULL;
@@ -335,6 +335,7 @@ static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
   return 10;
 }
 
+
 int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeout, poll_fun_t pollfunc) {
 	coroutine_t* self = coroutine_self();
   timeout = fix_coroutine_timeout(self, timeout);
@@ -365,6 +366,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 
 	arg.time.process = process_poll_event;
 	arg.time.coroutine = self;
+  arg.time.prev = arg.time.next = NULL;
   //arg.time.arg = &arg;
 	
 	//2. add epoll
@@ -375,7 +377,8 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 		arg.items[i].time.prepare = prepare_poll_event;
 		arg.items[i].time.coroutine = self;
 		arg.items[i].time.arg = &(arg.items[i]);
-
+    arg.items[i].time.prev = arg.items[i].time.next = NULL;
+  
 		if(fds[i].fd > -1) {
 		  struct epoll_event *ev = &(arg.items[i].event);
 			ev->data.ptr = &(arg.items[i].time);
@@ -407,6 +410,12 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 		}
 		free(arg.fds);
 
+    for(nfds_t i = 0; i < nfds; i++) {
+      int fd = fds[i].fd;
+      if(fd > -1) {
+        do_epoll_ctl(epfd,EPOLL_CTL_DEL,fd,&arg.items[i].event);
+      }
+    }
 		return -1;
 	}
 
@@ -414,7 +423,7 @@ int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeo
 
 	remove_from_link(&arg.time);
 
-	for(nfds_t i = 0;i < nfds;i++) {
+	for(nfds_t i = 0; i < nfds; i++) {
 		int fd = fds[i].fd;
 		if(fd > -1) {
 			do_epoll_ctl(epfd,EPOLL_CTL_DEL,fd,&arg.items[i].event);
@@ -471,6 +480,7 @@ int coroutine_setspecific(pthread_key_t key, const void *value) {
 int	coroutine_poll(epoll_context_t *ctx,struct pollfd fds[], nfds_t nfds, int timeout_ms) {
 	return poll_inner(ctx, fds, nfds, timeout_ms, NULL);
 }
+
 
 void coroutine_init_env(const coroutine_options_t *options) {
   coroutine_pthread_key_init();
