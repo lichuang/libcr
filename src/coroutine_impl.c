@@ -18,7 +18,7 @@ static const int kMaxCallStack = 128;
 static const int kMinStackSize = 128 * 1024;
 static const int kMaxStackSize = 8 * 1024 * 1024;
 // attention: kMaxTimeoutMs MUST NOT bigger than epoll timer size
-static const int kMaxTimeoutMs = 1000 * 10;
+static const int kMaxTimeoutMs = 10;
 static const int kDefaultIoTimeoutMs = 1000;
 static const int kDefaultTaskPerThread = 1000;
 
@@ -300,28 +300,30 @@ unsigned long long get_now() {
 //  > 0: timeout ms
 //  < 0: no timeout limit
 //  = 0: already timeout
-static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
+static int fix_coroutine_timeout(coroutine_t *co, int timeout, char *istimeout) {
   task_t *task = co->task;
+  *istimeout = 0;
+
   // attr no timeout limit
   if (task->attr.max_timeout_ms == -1) {
-    if (timeout == 0) {
-      // since return 0 means alreay timeout,so here return 1 ms
-      return 1;
+    if (timeout == -1 || timeout > kMaxTimeoutMs) {
+      timeout = kMaxTimeoutMs;
     }
-
     return timeout;
   }
+
   if (task->timeout) {
     // already timeout
+    *istimeout = 1;
     return 0;
   }
   unsigned long long now = get_now();
   int diff = now - task->last;
-  ASSERT(diff >= 0);
   task->leftmsec -= diff;
   task->last = now;
   if (task->leftmsec <= 0) {
     task->timeout = 1;
+    *istimeout = 1;
     return 0;
   }
 
@@ -331,17 +333,20 @@ static int fix_coroutine_timeout(coroutine_t *co, int timeout) {
     timeout = timeout > task->leftmsec ? task->leftmsec : timeout;
   }
 
-  //return timeout;
-  return 10;
+  if (timeout == -1 || timeout > kMaxTimeoutMs) {
+    timeout = kMaxTimeoutMs;
+  }
+  return timeout;
 }
 
 
 int poll_inner(epoll_context_t *ctx, struct pollfd fds[], nfds_t nfds, int timeout, poll_fun_t pollfunc) {
 	coroutine_t* self = coroutine_self();
-  timeout = fix_coroutine_timeout(self, timeout);
-  if (timeout == 0) {
+  char istimeout;
+  timeout = fix_coroutine_timeout(self, timeout, &istimeout);
+  if (istimeout == 1) {
     // timeout
-    return 0;
+    return -1;
   }
 
 	if(timeout == -1 || timeout > kMaxTimeoutMs) {
