@@ -276,24 +276,23 @@ int accept(int listen_fd, struct sockaddr *addr, socklen_t *len) {
   }
 	int fd = g_sys_accept(listen_fd,addr,len);
 
-  do {
-    if(fd < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        struct pollfd pf = {0};
-        pf.fd = listen_fd;
-        pf.events = (POLLIN|POLLERR|POLLHUP);
-        int n = coroutine_poll(get_epoll_context(),&pf,1, -1);
-        if (n <= 0 && co->task->timeout) {
-          close(listen_fd);
-          errno = EBADF;
-          return -1;
-        }
-	      fd = g_sys_accept(listen_fd,addr,len);
-        continue;
+  while (fd < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      struct pollfd pf = {0};
+      pf.fd = listen_fd;
+      pf.events = (POLLIN|POLLERR|POLLHUP);
+      int n = coroutine_poll(get_epoll_context(),&pf,1, -1);
+      if (n <= 0 && co->task->timeout) {
+        close(listen_fd);
+        errno = EBADF;
+        return -1;
       }
+      fd = g_sys_accept(listen_fd,addr,len);
+    } else {
+      // fd < 0
       return fd;
     }
-  } while (fd < 0);
+  };
 
 	lp = alloc_by_fd(fd);
 
@@ -342,14 +341,22 @@ int connect(int fd, const struct sockaddr *address, socklen_t address_len) {
 	//2.wait
 	struct pollfd pf = { 0 };
 
-  memset(&pf,0,sizeof(pf));
-  pf.fd = fd;
-  pf.events = (POLLOUT | POLLERR | POLLHUP);
+  for (int i = 0; i < 10; ++i) {
+    memset(&pf,0,sizeof(pf));
+    pf.fd = fd;
+    pf.events = (POLLOUT | POLLERR | POLLHUP);
 
-  if(!poll(&pf,1,-1) && co->task->timeout) {
-    close(fd);
-    errno = EBADF;
-    return -1;
+    /*
+    if(!poll(&pf,1,-1) && co->task->timeout) {
+      close(fd);
+      errno = EBADF;
+      return -1;
+    }
+    */
+    int pollret = poll(&pf,1,10);
+    if (pollret == 1) {
+      break;
+    }
   }
 
 	if(pf.revents & POLLOUT) {
@@ -388,7 +395,7 @@ int close(int fd) {
 static int wait_io_ready(coroutine_t *co, int fd, int events, int timeout) {
   struct pollfd pf = {0};
   pf.fd = fd;
-  pf.events = (POLLIN | POLLERR | POLLHUP);
+  pf.events = events;
 
   if(!poll(&pf,1,timeout) && co->task->timeout) {
     close(fd);
