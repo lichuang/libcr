@@ -40,7 +40,8 @@ void* coroutine_arg();
 
 void* coroutine_thread_arg();
 
-void coroutine_eventloop(void *arg);
+void coroutine_init_eventloop(void *arg);
+void coroutine_eventloop();
 
 #ifdef __cplusplus
 }
