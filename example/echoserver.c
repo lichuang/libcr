@@ -87,7 +87,7 @@ int main() {
   attr.timeout = NULL;
 
   coroutine_new_task(&attr);
-  coroutine_eventloop();
+  coroutine_eventloop(NULL);
 
   return 0;
 }
