@@ -7,9 +7,14 @@ extern "C" {
 
 #include "coroutine.h"
 #include "typedef.h"
+#ifdef USE_UCONTEXT
+#include <ucontext.h>  
+#endif
 
 struct context_t {
-#if defined(__i386__)
+#ifdef USE_UCONTEXT
+  ucontext_t ut;
+#elif defined(__i386__)
   void *regs[ 8 ];
 #else
   void *regs[ 14 ];
@@ -18,12 +23,16 @@ struct context_t {
   char *sp;
 };
 
-typedef void* (*context_fun_t)( void* s, void* s2 );
+typedef void (*context_fun_t)(void* s);
 
 int context_init(context_t *context);
-int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s1);
+int context_make(context_t *ctx, context_fun_t fun, const void *s);
 
+#ifdef USE_UCONTEXT
+void ucontext_swap(context_t* curr, context_t* pending);
+#else
 void context_swap(context_t* curr, context_t* pending);
+#endif
 
 #ifdef __cplusplus
 }

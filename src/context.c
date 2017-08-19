@@ -62,10 +62,8 @@ enum
 	kRSP = 13,
 };
 
-typedef struct param_t
-{
+typedef struct param_t {
   const void *s1;
-  const void *s2;
 } param_t;
 
 //64 bit
@@ -81,15 +79,29 @@ int context_init(context_t *context) {
   return 0;
 }
 
-#if defined(__i386__)
-int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s1) {
+#ifdef USE_UCONTEXT
+void ucontext_swap(context_t* curr, context_t* pending) {
+  swapcontext(&curr->ut, &pending->ut);
+}
+
+int context_make(context_t *ctx, context_fun_t fun, const void *s) {
+  getcontext(&ctx->ut);
+  ctx->ut.uc_stack.ss_sp = ctx->sp;  
+  ctx->ut.uc_stack.ss_size = ctx->size;
+  ctx->ut.uc_link = NULL;
+
+  makecontext(&ctx->ut, (void(*)(void))fun, 1);
+
+  return 0;
+}
+#elif defined(__i386__)
+int context_make(context_t *ctx, context_fun_t fun, const void *s) {
 	//make room for coctx_param
 	char *sp = ctx->sp + ctx->size - sizeof(param_t);
 	sp = (char*)((unsigned long)sp & -16L);
 
 	param_t* param = (param_t*)sp ;
 	param->s1 = s;
-	param->s2 = s1;
 
 	memset(ctx->regs, 0, sizeof(ctx->regs));
 
@@ -100,7 +112,7 @@ int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s
 }
 
 #elif defined(__x86_64__)
-int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s1) {
+int context_make(context_t *ctx, context_fun_t fun, const void *s) {
 	char *sp = ctx->sp + ctx->size;
 	sp = (char*) ((unsigned long)sp & -16LL);
 
@@ -111,7 +123,6 @@ int context_make(context_t *ctx, context_fun_t fun, const void *s, const void *s
 	ctx->regs[kRETAddr] = (char*)fun;
 
 	ctx->regs[kRDI] = (char*)s;
-	ctx->regs[kRSI] = (char*)s1;
 	return 0;
 }
 #endif

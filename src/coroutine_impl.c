@@ -26,6 +26,8 @@ coroutine_options_t gOptions;
 
 static env_t* gEnv[204800] = { NULL };
 
+static void yield_env(env_t *env);
+
 static inline pid_t get_pid() {
   char **p = (char**)pthread_self();
   return p ? *(pid_t*)(p + 18) : getpid();
@@ -65,6 +67,19 @@ static coroutine_t* create_env(env_t *env, coroutine_fun_t func, void *arg) {
   return co;
 }
 
+static void coroutine_main(void *arg) {
+  coroutine_t *co = (coroutine_t*)arg;
+  if (co->fun) {
+    co->fun(co->arg);
+  }
+  co->state = STOPPED;
+
+  env_t *env = co->env;
+  //coroutine_free(co);
+
+  yield_env(env);
+}
+
 env_t* init_curr_thread_env() {
   pid_t pid = 0;
   env_t *env = NULL;
@@ -76,6 +91,9 @@ env_t* init_curr_thread_env() {
   gEnv[pid] = env;
 
   coroutine_t *co = create_env(env, NULL, NULL);
+#ifdef USE_UCONTEXT  
+  context_make(&co->context, coroutine_main, co);
+#endif
   co->main = 1;
 
   context_init(&co->context);
@@ -133,6 +151,10 @@ void coroutine_free(coroutine_t *co) {
 }
 
 void coroutine_swap(coroutine_t* curr, coroutine_t* pending) {
+	//swap context
+#ifdef USE_UCONTEXT
+	ucontext_swap(&(curr->context), &(pending->context));
+#else
  	env_t* env = get_curr_thread_env();
 
 	//get curr stack sp
@@ -141,10 +163,7 @@ void coroutine_swap(coroutine_t* curr, coroutine_t* pending) {
 
   env->pending = NULL;
 	env->occupy = NULL;
-
-	//swap context
 	context_swap(&(curr->context), &(pending->context));
-
 	//stack buffer may be overwrite, so get again;
 	env_t* curr_env = get_curr_thread_env();
 	coroutine_t* update_occupy =  curr_env->occupy;
@@ -156,6 +175,7 @@ void coroutine_swap(coroutine_t* curr, coroutine_t* pending) {
 			memcpy(update_pending->stack_sp, update_pending->save_buffer, update_pending->save_size);
 		}
 	}
+#endif
 }
 
 static void yield_env(env_t *env) {
@@ -167,27 +187,11 @@ static void yield_env(env_t *env) {
   coroutine_swap(curr, last);
 }
 
-static void* coroutine_main(void *arg, void *s1) {
-  (void)s1;
-  coroutine_t *co = (coroutine_t*)arg;
-  if (co->fun) {
-    co->fun(co->arg);
-  }
-  co->state = STOPPED;
-
-  env_t *env = co->env;
-  //coroutine_free(co);
-
-  yield_env(env);
-
-  return NULL;
-}
-
 void coroutine_resume(coroutine_t *co) {
   env_t *env = co->env;
   coroutine_t *curr = env->callstack[env->callstacksize - 1];
   if (co->state != RUNNING) {
-    context_make(&co->context, coroutine_main, co, NULL);
+    context_make(&co->context, coroutine_main, co);
     co->state = RUNNING;
   }
 

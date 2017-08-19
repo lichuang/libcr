@@ -16,7 +16,7 @@ INCLUDE=
 CC=gcc
 AR= ar rcu
 #CFLAGS=-std=c99 -Wall -Werror -g 
-CFLAGS=-std=c99 -Wall -g -fno-strict-aliasing -O0 -export-dynamic -Wall -pipe  -D_GNU_SOURCE -D_REENTRANT -fPIC -Wno-deprecated -m64
+CFLAGS=-std=c99 -Wall -g -fno-strict-aliasing -O0 -export-dynamic -Wall -pipe  -D_GNU_SOURCE -D_REENTRANT -fPIC -Wno-deprecated -m64 
 #LDFLAGS= -L ./lib -lcr -pthread
 LDFLAGS= -L ./lib -lcr -ldl -lpthread
 
